@@ -11,15 +11,9 @@ class EventBus:
         self._subscribers: Dict[str, List[Callable]] = defaultdict(list)
 
     def subscribe(self, event_type: str, handler: Callable):
-        """
-        Подписка обработчика на событие.
-        """
         self._subscribers[event_type].append(handler)
 
     def publish(self, event_type: str, data: Any = None):
-        """
-        Публикация события.
-        """
         for handler in self._subscribers.get(event_type, []):
             handler(data)
 
