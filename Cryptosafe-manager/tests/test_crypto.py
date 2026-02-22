@@ -6,7 +6,8 @@ def test_xor_encrypt_decrypt():
     crypto = XORPlaceholderEncryption()
     km = KeyManager()
 
-    key = km.derive_key("password123")
+    salt = b"testsalt"
+    key = km.derive_key("password123", salt)
     data = b"secret data"
 
     encrypted = crypto.encrypt(data, key)
