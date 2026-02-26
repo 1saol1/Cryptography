@@ -1,28 +1,37 @@
+import time
+
+
 class StateManager:
 
-
     def __init__(self):
+        self.encryption_key = None
+        self.login_time = None
+        self.last_activity = None
+        self.failed_attempts = 0
+        self.auto_lock_timeout = 3600  # 1 час
 
-        self.is_authenticated = False
-        self.is_locked = True
+    def start_session(self, key: bytes):
+        self.encryption_key = key
+        self.login_time = time.time()
+        self.last_activity = time.time()
 
+    def update_activity(self):
+        self.last_activity = time.time()
 
-        self.clipboard_content = None
-        self.clipboard_timer = None
-        self.inactivity_timer = None
+    def is_active(self):
+        if self.encryption_key is None:
+            return False
 
+        current_time = time.time()
 
-    def login(self):
-        self.is_authenticated = True
-        self.is_locked = False
+        # авто-блокировка
+        if current_time - self.last_activity > self.auto_lock_timeout:
+            self.end_session()
+            return False
 
-    def logout(self):
-        self.is_authenticated = False
-        self.is_locked = True
+        return True
 
-    def lock(self):
-        self.is_locked = True
-
-    def unlock(self):
-        if self.is_authenticated:
-            self.is_locked = False
+    def end_session(self):
+        self.encryption_key = None
+        self.login_time = None
+        self.last_activity = None

@@ -4,10 +4,10 @@ from .password_entry import PasswordEntry
 
 
 class SetupWindow(tk.Toplevel):
-    def __init__(self, parent):
+    def __init__(self, parent, auth):
         super().__init__(parent)
-
-        self.completed = False  # <--- важное изменение
+        self.auth = auth
+        self.completed = False
 
         self.title("Initial Setup")
         self.geometry("400x350")
@@ -31,9 +31,17 @@ class SetupWindow(tk.Toplevel):
         save_btn.pack(pady=15)
 
     def save(self):
-        if self.password1.get() != self.password2.get():
+        password1 = self.password1.get()
+        password2 = self.password2.get()
+
+        if password1 != password2:
             messagebox.showerror("Error", "Passwords do not match")
             return
 
-        self.completed = True  # <--- отмечаем что setup завершён
+        if not password1:
+            messagebox.showerror("Error", "Password cannot be empty")
+            return
+
+        self.auth.register(password1)
+        self.completed = True
         self.destroy()

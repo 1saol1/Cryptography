@@ -36,23 +36,22 @@ def create_tables(conn):
 
     # Таблица настроек приложения
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS settings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            setting_key TEXT UNIQUE,
-            setting_value TEXT,
-            encrypted INTEGER DEFAULT 0
-        )
-    """)
+           CREATE TABLE IF NOT EXISTS key_store (
+               id INTEGER PRIMARY KEY,
+               key_type TEXT NOT NULL,
+               key_data BLOB NOT NULL,
+               version INTEGER NOT NULL,
+               created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+           )
+       """)
 
-    # Таблица для хранения информации о ключах (Sprint 2)
+    # Таблица настроек
     cursor.execute("""
-        CREATE TABLE IF NOT EXISTS key_store (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            key_type TEXT,
-            salt BLOB,
-            hash BLOB,
-            params TEXT
-        )
-    """)
+           CREATE TABLE IF NOT EXISTS settings (
+               id INTEGER PRIMARY KEY,
+               name TEXT UNIQUE NOT NULL,
+               value TEXT NOT NULL
+           )
+       """)
 
     conn.commit()

@@ -3,8 +3,6 @@ from tkinter import messagebox
 
 from src.core.events import EventBus, ENTRY_ADDED
 from src.database.audit_logger import AuditLogger
-from src.core.state_manager import StateManager
-from src.core.config import ConfigManager
 from src.database.db import Database
 
 from src.gui.widgets.secure_table import SecureTable
@@ -12,6 +10,40 @@ from src.gui.widgets.audit_log_viewer import AuditLogViewer
 from src.gui.widgets.settings_dialog import SettingsDialog
 from src.gui.widgets.setup_window import SetupWindow
 
+from src.core.crypto.authentication import AuthenticationService
+from src.core.state_manager import StateManager
+
+# login window
+
+def show_login_window(root, auth, session):
+    login_window = tk.Toplevel(root)
+    login_window.title("Login")
+    login_window.geometry("300x200")
+
+    tk.Label(login_window, text="Enter Master Password").pack(pady=10)
+    entry = tk.Entry(login_window, show="*")
+    entry.pack(pady=5)
+
+    result = {"success": False}
+
+    def login():
+        password = entry.get()
+        key = auth.login(password)
+
+        if key:
+            session.start_session(key)
+            result["success"] = True
+            login_window.destroy()
+        else:
+            messagebox.showerror("Error", "Wrong password")
+
+    tk.Button(login_window, text="Login", command=login).pack(pady=10)
+
+    root.wait_window(login_window)
+    return result["success"]
+
+
+# main application
 
 class CryptoSafeApp:
 
@@ -20,94 +52,68 @@ class CryptoSafeApp:
         self.root.title("CryptoSafe Manager")
         self.root.geometry("900x600")
 
-        # ============================
-        # Core initialization
-        # ============================
-
+        # Core
         self.event_bus = EventBus()
         self.audit_logger = AuditLogger(self.event_bus)
-
-        self.state = StateManager()
-        self.config = ConfigManager("src/database/cryptosafe.db")
 
         self.db = Database("src/database/cryptosafe.db")
         self.db.initialize()
 
-        # ============================
-        # UI setup
-        # ============================
-
+        # UI
         self.create_menu()
         self.create_table()
         self.create_buttons()
         self.create_status_bar()
 
 
-    # ============================
-    # MENU
-    # ============================
+    # Menu
+
 
     def create_menu(self):
         menu_bar = tk.Menu(self.root)
 
-        # File
         file_menu = tk.Menu(menu_bar, tearoff=0)
-        file_menu.add_command(label="New")
-        file_menu.add_command(label="Open")
-        file_menu.add_command(label="Backup")
-        file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.root.quit)
         menu_bar.add_cascade(label="File", menu=file_menu)
 
-        # Edit
         edit_menu = tk.Menu(menu_bar, tearoff=0)
         edit_menu.add_command(label="Add", command=self.open_add_dialog)
-        edit_menu.add_command(label="Edit")
         edit_menu.add_command(label="Delete", command=self.delete_selected)
         menu_bar.add_cascade(label="Edit", menu=edit_menu)
 
-        # View
         view_menu = tk.Menu(menu_bar, tearoff=0)
         view_menu.add_command(label="Logs", command=self.open_logs)
         view_menu.add_command(label="Settings", command=self.open_settings)
         menu_bar.add_cascade(label="View", menu=view_menu)
 
-        # Help
         help_menu = tk.Menu(menu_bar, tearoff=0)
         help_menu.add_command(label="About", command=self.show_about)
         menu_bar.add_cascade(label="Help", menu=help_menu)
 
         self.root.config(menu=menu_bar)
 
-    # ============================
-    # TABLE
-    # ============================
+    # table
 
     def create_table(self):
         self.table = SecureTable(self.root)
         self.table.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-    # ============================
-    # BUTTONS
-    # ============================
+
+    # buttons
+
 
     def create_buttons(self):
         frame = tk.Frame(self.root)
         frame.pack(pady=5)
 
-        add_btn = tk.Button(frame, text="Add Entry", command=self.open_add_dialog)
-        add_btn.pack(side=tk.LEFT, padx=5)
+        tk.Button(frame, text="Add Entry", command=self.open_add_dialog).pack(side=tk.LEFT, padx=5)
+        tk.Button(frame, text="Delete Entry", command=self.delete_selected).pack(side=tk.LEFT, padx=5)
 
-        delete_btn = tk.Button(frame, text="Delete Entry", command=self.delete_selected)
-        delete_btn.pack(side=tk.LEFT, padx=5)
-
-    # ============================
-    # STATUS BAR
-    # ============================
+    # status bar
 
     def create_status_bar(self):
         self.status_var = tk.StringVar()
-        self.status_var.set("Status: Locked | Clipboard: --")
+        self.status_var.set("Status: Unlocked")
 
         status_bar = tk.Label(
             self.root,
@@ -117,9 +123,8 @@ class CryptoSafeApp:
         )
         status_bar.pack(fill=tk.X, side=tk.BOTTOM)
 
-    # ============================
-    # ADD ENTRY
-    # ============================
+
+    # add entry
 
     def open_add_dialog(self):
         dialog = tk.Toplevel(self.root)
@@ -149,25 +154,20 @@ class CryptoSafeApp:
 
             self.table.add_entry(title, username, url)
 
-            # публикуем событие
             self.event_bus.publish(ENTRY_ADDED, {"title": title})
 
             dialog.destroy()
 
-        tk.Button(dialog, text="Save", command=save).pack(pady=10)
+        tk.Button(dialog, text="Save", command=save).pack(pady=5)
 
-    # ============================
-    # DELETE
-    # ============================
+    # delete
 
     def delete_selected(self):
         selected = self.table.selection()
         for item in selected:
             self.table.delete(item)
 
-    # ============================
-    # OTHER WINDOWS
-    # ============================
+    # other windows
 
     def open_logs(self):
         AuditLogViewer(self.root)
@@ -176,28 +176,37 @@ class CryptoSafeApp:
         SettingsDialog(self.root)
 
     def show_about(self):
-        messagebox.showinfo("About", "CryptoSafe Manager\nSprint 1")
+        messagebox.showinfo("About", "CryptoSafe Manager\nSprint 2")
 
-
-# ============================
-# MAIN
-# ============================
 
 def main():
     root = tk.Tk()
-    root.withdraw()  # скрываем главное окно
+    root.withdraw()
 
-    setup = SetupWindow(root)
-    root.wait_window(setup)  # ждём закрытия setup
+    db = Database("src/database/cryptosafe.db")
+    db.initialize()   # ← ВАЖНО
 
-    if not setup.completed:
+    auth = AuthenticationService("src/database/cryptosafe.db")
+    session = StateManager()
+
+    if not auth.is_initialized():
+        setup = SetupWindow(root, auth)
+        root.wait_window(setup)
+
+        if not setup.completed:
+            root.destroy()
+            return
+
+    login_success = show_login_window(root, auth, session)
+
+    if not login_success:
         root.destroy()
         return
 
-    root.deiconify()  # показываем главное окно
-
+    root.deiconify()
     app = CryptoSafeApp(root)
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()
