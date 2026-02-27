@@ -3,9 +3,6 @@ from typing import Callable, Dict, List, Any
 
 
 class EventBus:
-    """
-    Простой publish/subscribe event bus.
-    """
 
     def __init__(self):
         self._subscribers: Dict[str, List[Callable]] = defaultdict(list)

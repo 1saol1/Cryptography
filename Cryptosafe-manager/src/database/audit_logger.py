@@ -3,9 +3,6 @@ from src.core.events import ENTRY_ADDED, ENTRY_UPDATED, ENTRY_DELETED
 
 
 class AuditLogger:
-    """
-    Заглушка журнала аудита (Sprint 1).
-    """
 
     def __init__(self, event_bus):
         self.event_bus = event_bus

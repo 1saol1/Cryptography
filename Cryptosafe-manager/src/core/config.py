@@ -3,9 +3,6 @@ import sqlite3
 
 
 class ConfigManager:
-    """
-    Центральный менеджер конфигурации приложения.
-    """
 
     def __init__(self, db_path: str):
         self.db_path = db_path
