@@ -92,8 +92,3 @@ flowchart LR
     CORE --> EVT[Event Bus<br>src/core/events.py]
     EVT --> GUI
 ```
-   +-----------------------------------+
-   |          Business Logic           |
-   |  core/crypto (шифрование)         |
-   |  database (SQLite + модели)       |
-   +-----------------------------------+
