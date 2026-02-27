@@ -8,7 +8,6 @@ def test_initial_setup_process():
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
 
-    # Теперь это будет работать! Соединение закроется автоматически
     with Database(path) as db:
         db.initialize()
 
@@ -20,5 +19,4 @@ def test_initial_setup_process():
 
         assert auth.is_initialized() is True
 
-    # Файл можно удалить, потому что соединение закрыто
     os.remove(path)

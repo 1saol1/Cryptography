@@ -16,7 +16,7 @@ def create_tables(conn):
         )
     """)
 
-    # Индекс для ускорения поиска по названию
+
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_vault_title
         ON vault_entries(title)
@@ -34,7 +34,7 @@ def create_tables(conn):
         )
     """)
 
-    # Таблица настроек приложения
+
     cursor.execute("""
            CREATE TABLE IF NOT EXISTS key_store (
                id INTEGER PRIMARY KEY,
@@ -45,7 +45,7 @@ def create_tables(conn):
            )
        """)
 
-    # Таблица настроек
+
     cursor.execute("""
            CREATE TABLE IF NOT EXISTS settings (
                id INTEGER PRIMARY KEY,

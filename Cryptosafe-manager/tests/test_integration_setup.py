@@ -15,11 +15,9 @@ def test_database_initialization():
         version = db.get_user_version()
         assert version == 1
 
-        # Явно закрываем соединение с БД
         db.close()
 
     finally:
-        # Убеждаемся, что соединение закрыто перед удалением
         if db:
             db.close()
         os.remove(path)
