@@ -14,7 +14,4 @@ class AuditLogger:
         self.event_bus.subscribe(ENTRY_DELETED, self.log)
 
     def log(self, data):
-        """
-        В Sprint 1 просто выводим в консоль.
-        """
         print(f"[AUDIT] {datetime.utcnow()} — event: {data}")
