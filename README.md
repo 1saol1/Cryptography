@@ -84,17 +84,14 @@ pip install -r requirements.txt
 python src/gui/main_window.py
 ```
 # Архитектура проекта (MVC-подобная)
-                +-------------------+
-                |   GUI (Tkinter)   |
-                |  main_window.py   |
-                |     widgets/      |
-                +-------------------+
-                         ↑↓
-                +-------------------+
-                |  EventBus         |
-                |  StateManager     |
-                +-------------------+
-                         ↑↓
+
+```mermaid
+flowchart LR
+    GUI[GUI Layer<br>src/gui] --> CORE[Core Layer<br>src/core]
+    CORE --> DB[Database Layer<br>src/database]
+    CORE --> EVT[Event Bus<br>src/core/events.py]
+    EVT --> GUI
+```
    +-----------------------------------+
    |          Business Logic           |
    |  core/crypto (шифрование)         |
