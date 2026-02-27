@@ -7,9 +7,9 @@ CryptoSafe Manager — это безопасный менеджер пароле
 Основная цель — создать безопасное локальное хранилище,
 защищённое мастер-паролем и криптографией.
 
-#  Roadmap (8 Sprints)
+#  План разработки (8 спринтов)
 
-##  Sprint 1 — Architecture & Foundation
+##  Спринт 1 — Архитектура и основа
 - Структура проекта
 - SQLite база данных
 - EventBus
@@ -18,45 +18,45 @@ CryptoSafe Manager — это безопасный менеджер пароле
 - Setup Window (создание мастер-пароля)
 - README + архитектурная документация
 
-##  Sprint 2 — Authentication & Key Management
+##  Спринт 2 — Аутентификация и управление ключами
 - Master password hashing (salt + PBKDF2)
 - Key derivation
 - Session management
 - Login window
 - Хранение auth_hash в key_store
 
-##  Sprint 3 — Real Encryption
+##  Спринт 3 — Шифрование
 - Замена XOR на AES
 - Secure memory handling
 - Key rotation support
 
-##  Sprint 4 — Secure Storage
+##  Спринт 4 — Безопасное хранилище
 - Шифрование записей в БД
 - Разделение metadata и encrypted payload
 
-##  Sprint 5 — Advanced Security
+##  Спринт 5 — Продвинутая безопасность
 - Brute-force protection
 - Exponential backoff
 - Audit improvements
 
-##  Sprint 6 — UX & Improvements
+##  Спринт 6 — Пользовательский опыт и улучшения
 - Автоблокировка
 - Clipboard timeout
 - Password strength checker
 
-##  Sprint 7 — Testing & Hardening
+##  Спринт 7 — Тестирование и укрепление
 - Unit tests coverage
 - Edge-case testing
 - Code cleanup
 
-##  Sprint 8 — Final Security Review
+##  Спринт 8 — Финальный обзор безопасности
 - Threat modeling
 - Security checklist
 - Documentation finalization
 
-# Installation Guide
+# Инструкция по установке
 
-## Clone repository
+## Клонирование репозитория
 
 ```bash
 git clone <your-repository-url>
