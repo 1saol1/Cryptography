@@ -8,7 +8,9 @@ class StateManager:
         self.login_time = None
         self.last_activity = None
         self.failed_attempts = 0
-        self.auto_lock_timeout = 3600  # 1 час
+        self.auto_lock_timeout = 3600
+        self.is_locked = True
+        self.current_user = None
 
     def start_session(self, key: bytes):
         self.encryption_key = key
@@ -35,3 +37,10 @@ class StateManager:
         self.encryption_key = None
         self.login_time = None
         self.last_activity = None
+
+    def lock(self):
+        self.is_locked = True
+
+    def unlock(self, user:str):
+        self.is_locked = False
+        self.current_user = user

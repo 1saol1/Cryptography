@@ -102,7 +102,6 @@ class CryptoSafeApp:
 
         self.root.config(menu=menubar)
 
-    # ── Функции меню Файл ───────────────────────────────────────────────────────
 
     def new_database(self):
         messagebox.showinfo("Создать", "Функция создания новой базы данных\n(будет реализована в следующих спринтах)")
@@ -118,7 +117,6 @@ class CryptoSafeApp:
     def create_backup(self):
         messagebox.showinfo("Резервная копия", "Создание резервной копии\n(будет реализовано в спринте 8)")
 
-    # ── Функции меню Правка ─────────────────────────────────────────────────────
 
     def edit_selected(self):
         selected = self.table.selection()
@@ -129,7 +127,6 @@ class CryptoSafeApp:
         # Пока заглушка
         messagebox.showinfo("Редактирование", "Функция редактирования записи\n(будет реализована позже)")
 
-    # ── Остальные функции (уже были) ───────────────────────────────────────────
 
     def create_toolbar(self):
         toolbar = ttk.Frame(self.root)
@@ -211,7 +208,6 @@ class CryptoSafeApp:
             "CryptoSafe Manager\n\n"
             "Учебный проект — Спринт 1\n"
             "Локальный менеджер паролей с шифрованием\n"
-            "2025–2026"
         )
 
     def on_entry_added(self, data):

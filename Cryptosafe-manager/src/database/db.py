@@ -5,21 +5,32 @@ from .models import create_tables
 class Database:
     def __init__(self, db_path):
         self.db_path = db_path
-        self.connection = None  # сохраняем соединение
+        self._connection = None  # Сохраняем соединение, если нужно
 
     def connect(self):
-        if self.connection is None:
-            self.connection = sqlite3.connect(self.db_path)
-        return self.connection
+        if self._connection is None:
+            self._connection = sqlite3.connect(self.db_path)
+        return self._connection
+
+    def close(self):
+        """Явно закрывает соединение с базой данных"""
+        if self._connection:
+            self._connection.close()
+            self._connection = None
 
     def initialize(self):
-        conn = self.connect()
-        create_tables(conn)
-        conn.execute("PRAGMA user_version = 1")
-        conn.commit()
+        with self.connect() as conn:
+            create_tables(conn)
+            conn.execute("PRAGMA user_version = 1")
 
     def get_user_version(self):
-        conn = self.connect()
-        cursor = conn.execute("PRAGMA user_version")
-        version = cursor.fetchone()[0]
-        return version
+        with self.connect() as conn:
+            cursor = conn.execute("PRAGMA user_version")
+            return cursor.fetchone()[0]
+
+    # Добавляем поддержку контекстного менеджера
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
