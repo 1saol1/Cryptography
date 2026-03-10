@@ -1,6 +1,5 @@
 import sqlite3
 import time
-import secrets
 from typing import Optional
 
 from .key_manager import KeyManager
