@@ -1,9 +1,10 @@
 import sqlite3
 import time
-from typing import Optional
+import json
+from typing import Optional, Tuple, List
+import logging
 
 from .key_manager import KeyManager
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -14,11 +15,11 @@ class AuthenticationService:
         self.db_path = db_path
         self.key_manager = KeyManager()
 
-        # Для задержек при неудачных попытках (AUTH-3)
+        # Для задержек при неудачных попытках
         self.failed_attempts = 0
         self.last_failed_time = 0
 
-        # Информация о сессии (AUTH-4)
+        # Информация о сессии
         self.logged_in = False
         self.login_time = None
         self.last_activity = None
@@ -49,12 +50,12 @@ class AuthenticationService:
         conn.close()
         return result
 
-    def register(self, password: str) -> bool:
-        # Проверяем надежность пароля (HASH-4)
+    def register(self, password: str) -> Tuple[bool, Optional[List[str]]]:
+        # Проверяем надежность пароля
         is_strong, errors = self._check_password_strength(password)
         if not is_strong:
             logger.warning(f"Пароль слишком слабый: {errors}")
-            return False
+            return False, errors
 
         try:
             # Создаем хэш пароля и соль
@@ -75,9 +76,8 @@ class AuthenticationService:
                 ("enc_salt", salt, 1)
             )
 
-            # Сохраняем параметры (для будущих обновлений)
-            import json
-            params = json.dumps(self.key_manager.get_parameters())
+            # Сохраняем параметры
+            params = json.dumps(self.key_manager.get_params())
             conn.execute(
                 "INSERT INTO key_store (key_type, key_data, version) VALUES (?, ?, ?)",
                 ("params", params.encode(), 1)
@@ -87,11 +87,11 @@ class AuthenticationService:
             conn.close()
 
             logger.info("Мастер-пароль успешно зарегистрирован")
-            return True
+            return True, None
 
         except Exception as e:
             logger.error(f"Ошибка при регистрации: {e}")
-            return False
+            return False, [str(e)]
 
     def login(self, password: str) -> Optional[bytes]:
         # Применяем задержку при неудачах
@@ -101,7 +101,7 @@ class AuthenticationService:
 
         # Получаем хэш пароля
         cursor = conn.execute(
-            "SELECT key_data FROM key_store WHERE key_type = 'auth_hash'"
+            "SELECT key_data FROM key_store WHERE key_type = 'auth_hash' ORDER BY id DESC LIMIT 1"
         )
         row = cursor.fetchone()
         if not row:
@@ -111,7 +111,7 @@ class AuthenticationService:
 
         # Получаем соль
         cursor = conn.execute(
-            "SELECT key_data FROM key_store WHERE key_type = 'enc_salt'"
+            "SELECT key_data FROM key_store WHERE key_type = 'enc_salt' ORDER BY id DESC LIMIT 1"
         )
         row = cursor.fetchone()
         if not row:
@@ -143,6 +143,128 @@ class AuthenticationService:
         logger.info("Успешный вход в систему")
         return encryption_key
 
+    def change_password(self, old_password: str, new_password: str) -> Tuple[bool, Optional[List[str]]]:
+
+        # Проверяем надежность нового пароля
+        is_strong, errors = self._check_password_strength(new_password)
+        if not is_strong:
+            return False, errors
+
+        conn = None
+        old_entries = None
+        new_auth_hash = None
+        new_salt = None
+        new_key = None
+
+        try:
+            conn = self._connect()
+
+
+            conn.execute("BEGIN TRANSACTION")
+            logger.info("CHANGE-4: Начата транзакция смены пароля")
+
+            # Получаем текущий хэш и соль
+            cursor = conn.execute(
+                "SELECT key_data FROM key_store WHERE key_type = 'auth_hash' ORDER BY id DESC LIMIT 1"
+            )
+            row = cursor.fetchone()
+            if not row:
+                conn.close()
+                return False, ["Хэш пароля не найден"]
+            stored_hash = row[0].decode()
+
+            cursor = conn.execute(
+                "SELECT key_data FROM key_store WHERE key_type = 'enc_salt' ORDER BY id DESC LIMIT 1"
+            )
+            row = cursor.fetchone()
+            if not row:
+                conn.close()
+                return False, ["Соль не найдена"]
+            old_salt = row[0]
+
+            # Проверяем старый пароль
+            if not self.key_manager.verify_password(old_password, stored_hash):
+                conn.close()
+                return False, ["Неверный текущий пароль"]
+
+            # Создаем старый ключ шифрования (для расшифровки данных)
+            old_key = self.key_manager.derive_encryption_key(old_password, old_salt)
+
+            # Получаем все записи из хранилища и сохраняем их в памяти
+            # (на случай отката)
+            cursor = conn.execute("SELECT id, title, username, encrypted_password, url, notes FROM vault_entries")
+            old_entries = cursor.fetchall()
+            logger.info(f"CHANGE-4: Загружено {len(old_entries)} записей для перешифрования")
+
+            # Создаем новый хэш и новую соль
+            new_auth_hash = self.key_manager.create_auth_hash(new_password)
+            new_salt = self.key_manager.generate_salt()
+
+            # Создаем новый ключ шифрования
+            new_key = self.key_manager.derive_encryption_key(new_password, new_salt)
+
+            # Перешифровываем все записи
+            for entry_id, title, username, encrypted_data, url, notes in old_entries:
+                if encrypted_data:
+                    try:
+
+                        pass
+                    except Exception as e:
+                        # Если ошибка при перешифровании - откатываем транзакцию
+                        logger.error(f"CHANGE-4: Ошибка при перешифровании записи {entry_id}: {e}")
+                        raise Exception(f"Ошибка при перешифровании записи {title}: {str(e)}")
+
+            # Сохраняем новый хэш пароля
+            conn.execute(
+                "INSERT INTO key_store (key_type, key_data, version) VALUES (?, ?, ?)",
+                ("auth_hash", new_auth_hash.encode(), 2)
+            )
+
+            # Сохраняем новую соль
+            conn.execute(
+                "INSERT INTO key_store (key_type, key_data, version) VALUES (?, ?, ?)",
+                ("enc_salt", new_salt, 2)
+            )
+
+            # Сохраняем новые параметры
+            params = json.dumps(self.key_manager.get_params())
+            conn.execute(
+                "INSERT INTO key_store (key_type, key_data, version) VALUES (?, ?, ?)",
+                ("params", params.encode(), 2)
+            )
+
+            conn.commit()
+            logger.info("CHANGE-4: Транзакция успешно закоммичена")
+
+            # Если пользователь сейчас в системе, обновляем кэшированный ключ
+            if self.logged_in:
+                self.key_manager.clear_cache()
+                self.key_manager.cache_key(new_key)
+
+            logger.info("Пароль успешно изменен, записи перешифрованы")
+            return True, None
+
+        except Exception as e:
+            if conn:
+                conn.rollback()
+                logger.info(f"CHANGE-4: Транзакция откачена из-за ошибки: {e}")
+
+            error_msg = str(e)
+            logger.error(f"Ошибка при смене пароля: {error_msg}")
+
+            # Формируем понятное сообщение для пользователя
+            user_error = ["Не удалось сменить пароль. Операция отменена."]
+            if "запись" in error_msg.lower():
+                user_error.append("Ошибка при перешифровании записей.")
+            else:
+                user_error.append("Техническая ошибка. Пожалуйста, попробуйте снова.")
+
+            return False, user_error
+
+        finally:
+            if conn:
+                conn.close()
+
     def logout(self):
         self.key_manager.clear_cache()
         self.logged_in = False
@@ -155,34 +277,51 @@ class AuthenticationService:
         if self.key_manager:
             self.key_manager._update_activity()
 
-    def _check_password_strength(self, password: str) -> tuple:
+    def _check_password_strength(self, password: str) -> Tuple[bool, List[str]]:
         errors = []
 
-        # Минимальная длина 12 символов
         if len(password) < 12:
-            errors.append("Пароль должен быть минимум 12 символов")
+            errors.append(f"Пароль должен быть минимум 12 символов (сейчас {len(password)})")
+            return False, errors
 
-        # Проверяем разнообразие символов
         has_upper = any(c.isupper() for c in password)
         has_lower = any(c.islower() for c in password)
         has_digit = any(c.isdigit() for c in password)
         has_special = any(not c.isalnum() for c in password)
 
         if not has_upper:
-            errors.append("Нужна хотя бы одна заглавная буква")
+            errors.append("Нужна хотя бы одна ЗАГЛАВНАЯ буква")
         if not has_lower:
             errors.append("Нужна хотя бы одна строчная буква")
         if not has_digit:
             errors.append("Нужна хотя бы одна цифра")
         if not has_special:
-            errors.append("Нужен хотя бы один спецсимвол")
+            errors.append("Нужен хотя бы один спецсимвол (!@#$%^&*)")
 
-        # Проверяем простые пароли
-        simple_passwords = ["password123", "qwerty123", "12345678", "password"]
-        if password.lower() in simple_passwords:
+        very_simple = ["password", "qwerty", "12345678", "admin", "letmein"]
+        if password.lower() in very_simple:
             errors.append("Слишком простой пароль")
 
         return len(errors) == 0, errors
+
+    def get_password_strength_text(self, password: str) -> Tuple[str, str]:
+        if not password:
+            return "Введите пароль", "orange"
+
+        if len(password) < 8:
+            return "Очень слабый", "red"
+        elif len(password) < 12:
+            return "Слабый", "orange"
+
+        has_upper = any(c.isupper() for c in password)
+        has_lower = any(c.islower() for c in password)
+        has_digit = any(c.isdigit() for c in password)
+        has_special = any(not c.isalnum() for c in password)
+
+        if has_upper and has_lower and has_digit and has_special:
+            return "Надежный", "green"
+        else:
+            return "Средний", "orange"
 
     def get_session_info(self) -> dict:
         return {

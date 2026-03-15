@@ -1,86 +1,136 @@
-import tkinter as tk
-from tkinter import ttk, messagebox
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTabWidget,
+                             QWidget, QLabel, QSpinBox, QPushButton,
+                             QRadioButton, QButtonGroup, QComboBox, QFrame)
+from PyQt6.QtCore import Qt
 
 
-class SettingsDialog(tk.Toplevel):
-    def __init__(self, parent):
+class SettingsDialog(QDialog):
+    def __init__(self, parent=None):
         super().__init__(parent)
-        self.title("Настройки CryptoSafe Manager")
-        self.geometry("620x520")
-        self.resizable(False, False)
+        self.setWindowTitle("Настройки CryptoSafe Manager")
+        self.setGeometry(100, 100, 620, 520)
+        self.setModal(True)
 
-        self.create_notebook()
-        self.center_on_screen()
+        main_layout = QVBoxLayout(self)
 
-    def center_on_screen(self):
-        self.update_idletasks()
-        w = self.winfo_width()
-        h = self.winfo_height()
-        x = (self.winfo_screenwidth() // 2) - (w // 2)
-        y = (self.winfo_screenheight() // 2) - (h // 2)
-        self.geometry(f'{w}x{h}+{x}+{y}')
+        tabs = QTabWidget()
 
-    def create_notebook(self):
-        notebook = ttk.Notebook(self)
-        notebook.pack(fill="both", expand=True, padx=10, pady=10)
+        tabs.addTab(self.create_security_tab(), "Безопасность")
+        tabs.addTab(self.create_appearance_tab(), "Внешний вид")
+        tabs.addTab(self.create_advanced_tab(), "Дополнительно")
 
-        # Вкладка 1 — Безопасность
-        sec = ttk.Frame(notebook, padding=15)
-        notebook.add(sec, text="Безопасность")
+        main_layout.addWidget(tabs)
 
-        ttk.Label(sec, text="Очистка буфера обмена через (секунды):").grid(row=0, column=0, sticky="w", pady=8)
-        self.clip_timeout = ttk.Spinbox(sec, from_=10, to=600, increment=10, width=8)
-        self.clip_timeout.grid(row=0, column=1, sticky="w", padx=(10, 0))
-        self.clip_timeout.set(90)
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
 
-        ttk.Label(sec, text="Автоматическая блокировка после (минут):").grid(row=1, column=0, sticky="w", pady=8)
-        self.autolock = ttk.Spinbox(sec, from_=1, to=120, increment=5, width=8)
-        self.autolock.grid(row=1, column=1, sticky="w", padx=(10, 0))
-        self.autolock.set(10)
+        cancel_btn = QPushButton("Отмена")
+        cancel_btn.clicked.connect(self.reject)
+        save_btn = QPushButton("Сохранить")
+        save_btn.clicked.connect(self.on_save)
 
-        ttk.Label(sec, text="(Значения будут сохраняться в следующих спринтах)").grid(
-            row=2, column=0, columnspan=2, pady=30, sticky="w")
+        button_layout.addWidget(cancel_btn)
+        button_layout.addWidget(save_btn)
 
-        # Вкладка 2 — Внешний вид
-        appear = ttk.Frame(notebook, padding=15)
-        notebook.add(appear, text="Внешний вид")
+        main_layout.addLayout(button_layout)
 
-        ttk.Label(appear, text="Тема оформления:").pack(anchor="w", pady=(10, 5))
-        self.theme = tk.StringVar(value="system")
-        ttk.Radiobutton(appear, text="Системная", variable=self.theme, value="system").pack(anchor="w", padx=10)
-        ttk.Radiobutton(appear, text="Светлая",   variable=self.theme, value="light").pack(anchor="w", padx=10)
-        ttk.Radiobutton(appear, text="Тёмная",    variable=self.theme, value="dark").pack(anchor="w", padx=10)
+    def create_security_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
 
-        ttk.Label(appear, text="Язык интерфейса:").pack(anchor="w", pady=(20, 5))
-        self.lang = ttk.Combobox(appear, values=["Русский", "English"], state="readonly", width=20)
-        self.lang.set("Русский")
-        self.lang.pack(anchor="w", padx=10)
+        clip_layout = QHBoxLayout()
+        clip_layout.addWidget(QLabel("Очистка буфера обмена через (секунды):"))
+        self.clip_timeout = QSpinBox()
+        self.clip_timeout.setRange(10, 600)
+        self.clip_timeout.setSingleStep(10)
+        self.clip_timeout.setValue(90)
+        clip_layout.addWidget(self.clip_timeout)
+        clip_layout.addStretch()
+        layout.addLayout(clip_layout)
 
-        ttk.Label(appear, text="(Применение темы и языка — в следующих спринтах)").pack(anchor="w", pady=30)
+        auto_layout = QHBoxLayout()
+        auto_layout.addWidget(QLabel("Автоматическая блокировка после (минут):"))
+        self.autolock = QSpinBox()
+        self.autolock.setRange(1, 120)
+        self.autolock.setSingleStep(5)
+        self.autolock.setValue(10)
+        auto_layout.addWidget(self.autolock)
+        auto_layout.addStretch()
+        layout.addLayout(auto_layout)
 
-        # Вкладка 3 — Дополнительно
-        adv = ttk.Frame(notebook, padding=15)
-        notebook.add(adv, text="Дополнительно")
+        layout.addWidget(QLabel("(Значения будут сохраняться в следующих спринтах)"))
+        layout.addStretch()
 
-        ttk.Button(adv, text="Создать резервную копию хранилища…", state="disabled").pack(fill="x", pady=6)
-        ttk.Button(adv, text="Восстановить из резервной копии…",   state="disabled").pack(fill="x", pady=6)
-        ttk.Button(adv, text="Экспортировать записи…",             state="disabled").pack(fill="x", pady=6)
-        ttk.Button(adv, text="Импортировать записи…",              state="disabled").pack(fill="x", pady=6)
+        return tab
 
-        ttk.Label(adv, text="Функции резервного копирования и импорта/экспорта\n"
-                            "будут реализованы в спринтах 6–8", justify="center").pack(pady=40)
+    def create_appearance_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
 
-        # Нижние кнопки
-        btn_frame = ttk.Frame(self)
-        btn_frame.pack(pady=15)
+        layout.addWidget(QLabel("Тема оформления:"))
 
-        ttk.Button(btn_frame, text="Отмена", command=self.destroy).pack(side="left", padx=12)
-        ttk.Button(btn_frame, text="Сохранить", command=self.on_save).pack(side="right", padx=12)
+        self.theme_group = QButtonGroup()
+
+        theme_system = QRadioButton("Системная")
+        theme_system.setChecked(True)
+        theme_light = QRadioButton("Светлая")
+        theme_dark = QRadioButton("Тёмная")
+
+        self.theme_group.addButton(theme_system)
+        self.theme_group.addButton(theme_light)
+        self.theme_group.addButton(theme_dark)
+
+        layout.addWidget(theme_system)
+        layout.addWidget(theme_light)
+        layout.addWidget(theme_dark)
+
+        layout.addSpacing(20)
+        layout.addWidget(QLabel("Язык интерфейса:"))
+
+        self.lang = QComboBox()
+        self.lang.addItems(["Русский", "English"])
+        layout.addWidget(self.lang)
+
+        layout.addSpacing(20)
+        layout.addWidget(QLabel("(Применение темы и языка — в следующих спринтах)"))
+        layout.addStretch()
+
+        return tab
+
+    def create_advanced_tab(self):
+        tab = QWidget()
+        layout = QVBoxLayout(tab)
+
+        backup_btn = QPushButton("Создать резервную копию хранилища…")
+        backup_btn.setEnabled(False)
+        layout.addWidget(backup_btn)
+
+        restore_btn = QPushButton("Восстановить из резервной копии…")
+        restore_btn.setEnabled(False)
+        layout.addWidget(restore_btn)
+
+        export_btn = QPushButton("Экспортировать записи…")
+        export_btn.setEnabled(False)
+        layout.addWidget(export_btn)
+
+        import_btn = QPushButton("Импортировать записи…")
+        import_btn.setEnabled(False)
+        layout.addWidget(import_btn)
+
+        layout.addSpacing(20)
+
+        label = QLabel("Функции резервного копирования и импорта/экспорта\n"
+                       "будут реализованы в спринтах 6–8")
+        label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(label)
+
+        layout.addStretch()
+
+        return tab
 
     def on_save(self):
-        # Пока просто заглушка — в будущем сохранять в таблицу settings
-        messagebox.showinfo(
-            "Настройки",
-            "Настройки сохранены (заглушка).\nЗначения вступят в силу после реализации в следующих спринтах."
-        )
-        self.destroy()
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Настройки",
+                                "Настройки сохранены (заглушка).\n"
+                                "Значения вступят в силу после реализации в следующих спринтах.")
+        self.accept()

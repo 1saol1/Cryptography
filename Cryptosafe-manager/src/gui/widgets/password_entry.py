@@ -1,28 +1,29 @@
-import tkinter as tk
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLineEdit, QCheckBox
+from PyQt6.QtCore import Qt
 
 
-class PasswordEntry(tk.Frame):
-    def __init__(self, parent):
+class PasswordEntry(QWidget):
+    def __init__(self, parent=None):
         super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
 
-        self.entry = tk.Entry(self, show="*")
-        self.entry.pack(side=tk.LEFT)
+        self.entry = QLineEdit()
+        self.entry.setEchoMode(QLineEdit.EchoMode.Password)
+        layout.addWidget(self.entry)
 
-        self.show_var = tk.BooleanVar()
-
-        self.checkbox = tk.Checkbutton(
-            self,
-            text="Show",
-            variable=self.show_var,
-            command=self.toggle_password
-        )
-        self.checkbox.pack(side=tk.LEFT)
+        self.show_checkbox = QCheckBox("Show")
+        self.show_checkbox.stateChanged.connect(self.toggle_password)
+        layout.addWidget(self.show_checkbox)
 
     def toggle_password(self):
-        if self.show_var.get():
-            self.entry.config(show="")
+        if self.show_checkbox.isChecked():
+            self.entry.setEchoMode(QLineEdit.EchoMode.Normal)
         else:
-            self.entry.config(show="*")
+            self.entry.setEchoMode(QLineEdit.EchoMode.Password)
 
     def get(self):
-        return self.entry.get()
+        return self.entry.text()
+
+    def clear(self):
+        self.entry.clear()

@@ -6,25 +6,29 @@ from cryptography.hazmat.backends import default_backend
 import os
 import secrets
 import logging
+from typing import Optional, Dict
 
 logger = logging.getLogger(__name__)
 
 
 class KeyDerivation:
 
-    def __init__(self):
-        # Argon2 параметры (HASH-2)
+    def __init__(self, config: Optional[Dict] = None):
+        if config is None:
+            config = {}
+
+        # Argon2 параметры с возможностью переопределения через config
         self.argon2_hasher = PasswordHasher(
-            time_cost=3,  # 3 итерации
-            memory_cost=64 * 1024,  # 64 МБ
-            parallelism=4,  # 4 потока
-            hash_len=32,  # 32 байта
+            time_cost=config.get('argon2_time', 3),
+            memory_cost=config.get('argon2_memory', 64 * 1024),
+            parallelism=config.get('argon2_parallelism', 4),
+            hash_len=32,
             salt_len=16,
             type=Type.ID
         )
 
-        # PBKDF2 параметры (KEY-2)
-        self.pbkdf2_iterations = 100000  # минимум 100000
+        # PBKDF2 параметры
+        self.pbkdf2_iterations = config.get('pbkdf2_iterations', 600000)
 
     def create_auth_hash(self, password: str) -> str:
         try:
@@ -34,12 +38,9 @@ class KeyDerivation:
             raise
 
     def verify_password(self, password: str, stored_hash: str) -> bool:
-
         try:
-            # Argon2 сам делает сравнение за константное время
             return self.argon2_hasher.verify(stored_hash, password)
         except VerificationError:
-            # Заглушка для константного времени
             secrets.compare_digest(b'dummy', b'dummy')
             return False
         except Exception:
@@ -49,10 +50,9 @@ class KeyDerivation:
         return os.urandom(16)
 
     def derive_encryption_key(self, password: str, salt: bytes) -> bytes:
-
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
-            length=32,  # 32 байта = AES-256
+            length=32,
             salt=salt,
             iterations=self.pbkdf2_iterations,
             backend=default_backend()
