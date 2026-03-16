@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 class KeyManager:
 
     def __init__(self):
-        self.derivation = KeyDerivation()  # Используем KeyDerivation
+        self.derivation = KeyDerivation()
         self.secure_memory = SecureMemory()
 
         # Кэш
@@ -58,9 +58,14 @@ class KeyManager:
             self.secure_memory.secure_clear(self._cached_key)
             self._cached_key = None
             self._session_start = None
+            logger.debug("Кэш очищен")
 
     def update_activity(self) -> None:
         self._last_activity = time.time()
+
+    def on_app_minimize(self) -> None:
+        logger.debug("Приложение свернуто - очищаем ключи")
+        self.clear_cache()
 
     def get_params(self) -> dict:
         return self.derivation.get_params()

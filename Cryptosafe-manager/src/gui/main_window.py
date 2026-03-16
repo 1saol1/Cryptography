@@ -4,8 +4,8 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QMessageBox, QFileDialog,
                              QMenuBar, QMenu, QStatusBar, QLabel, QDialog,
                              QLineEdit, QDialogButtonBox, QFormLayout, QToolBar)
-from PyQt6.QtCore import Qt, QTimer
-from PyQt6.QtGui import QAction, QIcon
+from PyQt6.QtCore import Qt, QTimer, QEvent
+from PyQt6.QtGui import QAction
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, BASE_DIR)
@@ -183,6 +183,15 @@ class CryptoSafeApp(QMainWindow):
         self.timer = QTimer()
         self.timer.timeout.connect(self.check_session_timeout)
         self.timer.start(60000)
+
+    def changeEvent(self, event):
+        """Обрабатывает изменение состояния окна"""
+        if event.type() == QEvent.Type.WindowStateChange:
+            if self.windowState() & Qt.WindowState.WindowMinimized:
+                print("📱 Окно свернуто - очищаем ключи")
+                self.key_manager.on_app_minimize()
+                self.status_bar.showMessage("Приложение свернуто - данные защищены")
+        super().changeEvent(event)
 
     def center_window(self):
         screen = QApplication.primaryScreen().geometry()
