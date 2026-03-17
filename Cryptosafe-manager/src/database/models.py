@@ -1,5 +1,3 @@
-import sqlite3
-import json
 import logging
 
 logger = logging.getLogger(__name__)
@@ -72,28 +70,27 @@ def create_tables(conn):
         )
     """)
 
-    # Добавляем настройки по умолчанию при первом запуске
+    # настройки по умолчанию при первом запуске
     cursor.execute("SELECT COUNT(*) FROM settings")
     if cursor.fetchone()[0] == 0:
         default_settings = [
-            # Конфигурация политики паролей
+            # конфигурация политики паролей
             ('password_min_length', '12', 'Минимальная длина пароля'),
             ('password_require_upper', 'true', 'Требовать заглавные буквы'),
             ('password_require_lower', 'true', 'Требовать строчные буквы'),
             ('password_require_digit', 'true', 'Требовать цифры'),
             ('password_require_special', 'true', 'Требовать спецсимволы'),
 
-            # Параметры формирования ключей
+            # параметры формирования ключей
             ('argon2_time_cost', '3', 'Количество итераций Argon2'),
             ('argon2_memory_cost', '65536', 'Используемая память Argon2 (KB)'),
             ('argon2_parallelism', '4', 'Количество потоков Argon2'),
             ('pbkdf2_iterations', '600000', 'Количество итераций PBKDF2'),
 
-            # Таймаут авто-блокировки
+            # таймаут авто-блокировки
             ('auto_lock_timeout', '60', 'Таймаут авто-блокировки (минуты)'),
             ('session_timeout', '60', 'Максимальное время сессии (минуты)'),
 
-            # Другие настройки
             ('clipboard_clear_timeout', '30', 'Время очистки буфера обмена (секунды)'),
             ('theme', 'system', 'Тема оформления (system/light/dark)'),
             ('language', 'ru', 'Язык интерфейса')
@@ -127,7 +124,7 @@ def update_db_version(conn, new_version: int):
     logger.info(f"Версия БД обновлена до {new_version}")
 
 
-#Функции для работы с настройками
+# функции для работы с настройками
 
 def get_setting(conn, name: str, default=None):
 

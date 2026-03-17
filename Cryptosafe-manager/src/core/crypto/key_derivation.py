@@ -30,6 +30,7 @@ class KeyDerivation:
         # PBKDF2 параметры
         self.pbkdf2_iterations = config.get('pbkdf2_iterations', 600000)
 
+    # создания хэша для аутентификации
     def create_auth_hash(self, password: str) -> str:
         try:
             return self.argon2_hasher.hash(password)
@@ -37,18 +38,28 @@ class KeyDerivation:
             logger.error(f"Ошибка создания хэша: {e}")
             raise
 
+    # верификация пароля (извлечение соли из stored_hash)
     def verify_password(self, password: str, stored_hash: str) -> bool:
         try:
-            return self.argon2_hasher.verify(stored_hash, password)
+
+            is_valid = self.argon2_hasher.verify(stored_hash, password)
+
+            expected = b"true" if is_valid else b"false"
+            actual = b"true"
+
+            return secrets.compare_digest(expected, actual)
+
         except VerificationError:
-            secrets.compare_digest(b'dummy', b'dummy')
-            return False
+            expected = b"false"
+            actual = b"true"
+            return secrets.compare_digest(expected, actual)
         except Exception:
             return False
 
     def generate_salt(self) -> bytes:
         return os.urandom(16)
 
+    # создания ключ шифрования из пароля
     def derive_encryption_key(self, password: str, salt: bytes) -> bytes:
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),

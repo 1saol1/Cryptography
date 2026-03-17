@@ -19,12 +19,10 @@ class SecureMemory:
 
         if data:
             try:
-                # Пытаемся затереть данные
                 if isinstance(data, bytearray):
                     for i in range(len(data)):
                         data[i] = 0
                 elif isinstance(data, bytes):
-                    # Для bytes создаем bytearray и затираем
                     mutable = bytearray(data)
                     for i in range(len(mutable)):
                         mutable[i] = 0

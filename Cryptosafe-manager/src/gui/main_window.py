@@ -468,6 +468,8 @@ def main():
     print("Создание главного окна...")
 
     window = CryptoSafeApp(state, auth)
+    state.key_manager = window.key_manager
+
     window.show()
 
     print("Запуск главного цикла...")

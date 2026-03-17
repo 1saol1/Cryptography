@@ -26,12 +26,12 @@ class EncryptionService(ABC):
 class VaultEncryptionService(EncryptionService):
 
     def encrypt(self, data: bytes) -> bytes:
-        key = self._get_key()  # получаем ключ из KeyManager
+        key = self._get_key()
         print(f"Шифруем данные ключом (первые 4 байта): {key[:4].hex()}...")
-        return data  # пока просто возвращаем как есть
+        return data
 
     def decrypt(self, data: bytes) -> bytes:
-        key = self._get_key()  # получаем ключ из KeyManager
+        key = self._get_key()
         print(f"Расшифровываем данные ключом (первые 4 байта): {key[:4].hex()}...")
         return data
 

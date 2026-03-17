@@ -3,7 +3,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Текущая версия схемы БД
 CURRENT_DB_VERSION = 2
 
 
@@ -31,7 +30,6 @@ class MigrationManager:
 
         logger.info(f"Миграция БД с версии {current_version} на {CURRENT_DB_VERSION}")
 
-        # Применяем миграции по порядку
         for version in range(current_version + 1, CURRENT_DB_VERSION + 1):
             if not self._apply_migration(version):
                 logger.error(f"Миграция на версию {version} не удалась")
@@ -51,9 +49,7 @@ class MigrationManager:
                 self._migrate_to_v1(conn)
             elif target_version == 2:
                 self._migrate_to_v2(conn)
-            # Здесь будут следующие миграции
 
-            # Обновляем PRAGMA user_version
             conn.execute(f"PRAGMA user_version = {target_version}")
             conn.commit()
 
@@ -72,7 +68,6 @@ class MigrationManager:
     def _migrate_to_v1(self, conn):
         cursor = conn.cursor()
 
-        # Таблица для отслеживания версии БД (для миграций)
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS db_version (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -81,12 +76,10 @@ class MigrationManager:
             )
         """)
 
-        # Если таблица пустая, добавляем версию 1
         cursor.execute("SELECT COUNT(*) FROM db_version")
         if cursor.fetchone()[0] == 0:
             cursor.execute("INSERT INTO db_version (id, version) VALUES (1, 1)")
 
-        # Таблица vault_entries
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS vault_entries (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -101,13 +94,11 @@ class MigrationManager:
             )
         """)
 
-        # Индекс
         cursor.execute("""
             CREATE INDEX IF NOT EXISTS idx_vault_title
             ON vault_entries(title)
         """)
 
-        # Таблица audit_log
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -144,7 +135,7 @@ class MigrationManager:
             )
         """)
 
-        # Добавляем настройки по умолчанию
+        # настройки по умолчанию
         default_settings = [
             ('session_timeout', '60'),
             ('password_min_length', '12'),
@@ -161,7 +152,7 @@ class MigrationManager:
                 VALUES (?, ?)
             """, (name, value))
 
-        # Обновляем версию в db_version
+
         cursor.execute("""
             UPDATE db_version SET version = 2, updated_at = CURRENT_TIMESTAMP
             WHERE id = 1
@@ -172,7 +163,6 @@ class MigrationManager:
     def backup_before_migration(self) -> str:
 
         import shutil
-        import os
         from datetime import datetime
 
         backup_path = f"{self.db_path}.backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}"

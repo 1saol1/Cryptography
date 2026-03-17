@@ -15,11 +15,9 @@ class AuthenticationService:
         self.db_path = db_path
         self.key_manager = KeyManager()
 
-        # Для задержек при неудачных попытках
         self.failed_attempts = 0
         self.last_failed_time = 0
 
-        # Информация о сессии
         self.logged_in = False
         self.login_time = None
         self.last_activity = None
@@ -41,6 +39,7 @@ class AuthenticationService:
             logger.debug(f"Задержка {delay}с перед следующей попыткой")
             time.sleep(delay)
 
+    # проверяет был ли человек зарегистрирован
     def is_initialized(self) -> bool:
         conn = self._connect()
         cursor = conn.execute(
@@ -51,32 +50,27 @@ class AuthenticationService:
         return result
 
     def register(self, password: str) -> Tuple[bool, Optional[List[str]]]:
-        # Проверяем надежность пароля
         is_strong, errors = self._check_password_strength(password)
         if not is_strong:
             logger.warning(f"Пароль слишком слабый: {errors}")
             return False, errors
 
         try:
-            # Создаем хэш пароля и соль
             auth_hash = self.key_manager.create_auth_hash(password)
             salt = self.key_manager.generate_salt()
 
             conn = self._connect()
 
-            # Сохраняем хэш пароля
             conn.execute(
                 "INSERT INTO key_store (key_type, key_data, version) VALUES (?, ?, ?)",
                 ("auth_hash", auth_hash.encode(), 1)
             )
 
-            # Сохраняем соль
             conn.execute(
                 "INSERT INTO key_store (key_type, key_data, version) VALUES (?, ?, ?)",
                 ("enc_salt", salt, 1)
             )
 
-            # Сохраняем параметры
             params = json.dumps(self.key_manager.get_params())
             conn.execute(
                 "INSERT INTO key_store (key_type, key_data, version) VALUES (?, ?, ?)",
@@ -94,12 +88,10 @@ class AuthenticationService:
             return False, [str(e)]
 
     def login(self, password: str) -> Optional[bytes]:
-        # Применяем задержку при неудачах
         self._apply_delay()
 
         conn = self._connect()
 
-        # Получаем хэш пароля
         cursor = conn.execute(
             "SELECT key_data FROM key_store WHERE key_type = 'auth_hash' ORDER BY id DESC LIMIT 1"
         )
@@ -109,7 +101,6 @@ class AuthenticationService:
             return None
         stored_hash = row[0].decode()
 
-        # Получаем соль
         cursor = conn.execute(
             "SELECT key_data FROM key_store WHERE key_type = 'enc_salt' ORDER BY id DESC LIMIT 1"
         )
@@ -121,23 +112,19 @@ class AuthenticationService:
 
         conn.close()
 
-        # Проверяем пароль
         if not self.key_manager.verify_password(password, stored_hash):
             self.failed_attempts += 1
             self.last_failed_time = time.time()
             logger.warning(f"Неудачная попытка входа #{self.failed_attempts}")
             return None
 
-        # Успешный вход
         self.failed_attempts = 0
         self.logged_in = True
         self.login_time = time.time()
         self.last_activity = time.time()
 
-        # Создаем ключ шифрования
         encryption_key = self.key_manager.derive_encryption_key(password, salt)
 
-        # Кэшируем ключ
         self.key_manager.cache_key(encryption_key)
 
         logger.info("Успешный вход в систему")
@@ -145,7 +132,6 @@ class AuthenticationService:
 
     def change_password(self, old_password: str, new_password: str) -> Tuple[bool, Optional[List[str]]]:
 
-        # Проверяем надежность нового пароля
         is_strong, errors = self._check_password_strength(new_password)
         if not is_strong:
             return False, errors
@@ -163,7 +149,6 @@ class AuthenticationService:
             conn.execute("BEGIN TRANSACTION")
             logger.info("CHANGE-4: Начата транзакция смены пароля")
 
-            # Получаем текущий хэш и соль
             cursor = conn.execute(
                 "SELECT key_data FROM key_store WHERE key_type = 'auth_hash' ORDER BY id DESC LIMIT 1"
             )
@@ -182,51 +167,40 @@ class AuthenticationService:
                 return False, ["Соль не найдена"]
             old_salt = row[0]
 
-            # Проверяем старый пароль
             if not self.key_manager.verify_password(old_password, stored_hash):
                 conn.close()
                 return False, ["Неверный текущий пароль"]
 
-            # Создаем старый ключ шифрования (для расшифровки данных)
             old_key = self.key_manager.derive_encryption_key(old_password, old_salt)
 
-            # Получаем все записи из хранилища и сохраняем их в памяти
-            # (на случай отката)
             cursor = conn.execute("SELECT id, title, username, encrypted_password, url, notes FROM vault_entries")
             old_entries = cursor.fetchall()
-            logger.info(f"CHANGE-4: Загружено {len(old_entries)} записей для перешифрования")
+            logger.info(f"Загружено {len(old_entries)} записей для перешифрования")
 
-            # Создаем новый хэш и новую соль
             new_auth_hash = self.key_manager.create_auth_hash(new_password)
             new_salt = self.key_manager.generate_salt()
 
-            # Создаем новый ключ шифрования
             new_key = self.key_manager.derive_encryption_key(new_password, new_salt)
 
-            # Перешифровываем все записи
             for entry_id, title, username, encrypted_data, url, notes in old_entries:
                 if encrypted_data:
                     try:
 
                         pass
                     except Exception as e:
-                        # Если ошибка при перешифровании - откатываем транзакцию
-                        logger.error(f"CHANGE-4: Ошибка при перешифровании записи {entry_id}: {e}")
+                        logger.error(f"Ошибка при перешифровании записи {entry_id}: {e}")
                         raise Exception(f"Ошибка при перешифровании записи {title}: {str(e)}")
 
-            # Сохраняем новый хэш пароля
             conn.execute(
                 "INSERT INTO key_store (key_type, key_data, version) VALUES (?, ?, ?)",
                 ("auth_hash", new_auth_hash.encode(), 2)
             )
 
-            # Сохраняем новую соль
             conn.execute(
                 "INSERT INTO key_store (key_type, key_data, version) VALUES (?, ?, ?)",
                 ("enc_salt", new_salt, 2)
             )
 
-            # Сохраняем новые параметры
             params = json.dumps(self.key_manager.get_params())
             conn.execute(
                 "INSERT INTO key_store (key_type, key_data, version) VALUES (?, ?, ?)",
@@ -234,9 +208,8 @@ class AuthenticationService:
             )
 
             conn.commit()
-            logger.info("CHANGE-4: Транзакция успешно закоммичена")
+            logger.info("Транзакция успешно закоммичена")
 
-            # Если пользователь сейчас в системе, обновляем кэшированный ключ
             if self.logged_in:
                 self.key_manager.clear_cache()
                 self.key_manager.cache_key(new_key)
@@ -247,12 +220,11 @@ class AuthenticationService:
         except Exception as e:
             if conn:
                 conn.rollback()
-                logger.info(f"CHANGE-4: Транзакция откачена из-за ошибки: {e}")
+                logger.info(f"Транзакция откачена из-за ошибки: {e}")
 
             error_msg = str(e)
             logger.error(f"Ошибка при смене пароля: {error_msg}")
 
-            # Формируем понятное сообщение для пользователя
             user_error = ["Не удалось сменить пароль. Операция отменена."]
             if "запись" in error_msg.lower():
                 user_error.append("Ошибка при перешифровании записей.")

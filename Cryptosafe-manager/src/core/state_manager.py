@@ -3,25 +3,23 @@ from typing import Optional
 
 
 class StateManager:
-
-    def __init__(self):
+    def __init__(self, key_manager=None):
         self.encryption_key = None
         self.login_time = None
         self.last_activity = None
         self.failed_attempts = 0
-        self.auto_lock_timeout = 3600  # 1 час по умолчанию (CACHE-2)
+        self.auto_lock_timeout = 3600
         self.is_locked = True
         self.current_user = None
-
-        # Добавляем для совместимости с новым кодом
         self.logged_in = False
+        self.key_manager = key_manager
 
     def start_session(self, key: bytes):
         self.encryption_key = key
         self.login_time = time.time()
         self.last_activity = time.time()
         self.is_locked = False
-        self.logged_in = True  # Добавляем
+        self.logged_in = True
         self.failed_attempts = 0
 
     def update_activity(self):
@@ -36,23 +34,19 @@ class StateManager:
         if self.encryption_key is None:
             return False
 
-        current_time = time.time()
-
-        # Проверка авто-блокировки (CACHE-2)
-        if current_time - self.last_activity > self.auto_lock_timeout:
-            print("Сессия заблокирована по таймауту неактивности")
+        if time.time() - self.last_activity > self.auto_lock_timeout:
             self.end_session()
             return False
 
-        # Проверка максимального времени сессии (1 час из задания)
-        if self.login_time and current_time - self.login_time > 3600:
-            print("Сессия истекла (максимальное время 1 час)")
+        if self.login_time and time.time() - self.login_time > 3600:
             self.end_session()
             return False
 
         return True
 
     def end_session(self):
+        if self.key_manager:
+            self.key_manager.clear_cache()
         self.encryption_key = None
         self.login_time = None
         self.last_activity = None
@@ -61,6 +55,8 @@ class StateManager:
         self.current_user = None
 
     def lock(self):
+        if self.key_manager:
+            self.key_manager.clear_cache()
         self.encryption_key = None
         self.is_locked = True
         self.logged_in = False
