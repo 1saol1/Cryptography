@@ -166,7 +166,7 @@ class CryptoSafeApp(QMainWindow):
         encryption_key = self.state.get_key()
         if encryption_key:
             self.key_manager.cache_key(encryption_key)
-            print("✓ Ключ шифрования закэширован в KeyManager")
+            print("Ключ шифрования закэширован в KeyManager")
         else:
             QMessageBox.critical(self, "Ошибка", "Не удалось получить ключ шифрования")
             sys.exit(1)
@@ -185,10 +185,9 @@ class CryptoSafeApp(QMainWindow):
         self.timer.start(60000)
 
     def changeEvent(self, event):
-        """Обрабатывает изменение состояния окна"""
         if event.type() == QEvent.Type.WindowStateChange:
             if self.windowState() & Qt.WindowState.WindowMinimized:
-                print("📱 Окно свернуто - очищаем ключи")
+                print("Окно свернуто - очищаем ключи")
                 self.key_manager.on_app_minimize()
                 self.status_bar.showMessage("Приложение свернуто - данные защищены")
         super().changeEvent(event)
