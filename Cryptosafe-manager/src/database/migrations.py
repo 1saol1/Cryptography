@@ -1,9 +1,10 @@
 import sqlite3
 import logging
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-CURRENT_DB_VERSION = 2
+CURRENT_DB_VERSION = 3  # обновляем до 3
 
 
 class MigrationManager:
@@ -49,6 +50,8 @@ class MigrationManager:
                 self._migrate_to_v1(conn)
             elif target_version == 2:
                 self._migrate_to_v2(conn)
+            elif target_version == 3:
+                self._migrate_to_v3(conn)
 
             conn.execute(f"PRAGMA user_version = {target_version}")
             conn.commit()
@@ -115,7 +118,6 @@ class MigrationManager:
     def _migrate_to_v2(self, conn):
         cursor = conn.cursor()
 
-        # Таблица key_store
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS key_store (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -126,7 +128,6 @@ class MigrationManager:
             )
         """)
 
-        # Таблица settings
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS settings (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -135,7 +136,6 @@ class MigrationManager:
             )
         """)
 
-        # настройки по умолчанию
         default_settings = [
             ('session_timeout', '60'),
             ('password_min_length', '12'),
@@ -152,7 +152,6 @@ class MigrationManager:
                 VALUES (?, ?)
             """, (name, value))
 
-
         cursor.execute("""
             UPDATE db_version SET version = 2, updated_at = CURRENT_TIMESTAMP
             WHERE id = 1
@@ -160,8 +159,116 @@ class MigrationManager:
 
         logger.info("Таблицы key_store и settings добавлены")
 
-    def backup_before_migration(self) -> str:
+    def _migrate_to_v3(self, conn):
 
+        cursor = conn.cursor()
+
+        logger.info("Начинаю миграцию на версию 3 (Спринт 3)...")
+
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS vault_entries_new (
+                id TEXT PRIMARY KEY,
+                encrypted_data BLOB NOT NULL,
+                created_at TIMESTAMP NOT NULL,
+                updated_at TIMESTAMP NOT NULL,
+                deleted_at TIMESTAMP,
+                tags TEXT DEFAULT '[]'
+            )
+        """)
+
+        cursor.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='vault_entries'")
+        old_table_exists = cursor.fetchone()[0] > 0
+
+        if old_table_exists:
+            cursor.execute("SELECT COUNT(*) FROM vault_entries")
+            count = cursor.fetchone()[0]
+            logger.info(f"Переношу {count} записей из старой таблицы...")
+
+
+            cursor.execute("""
+                SELECT id, title, username, encrypted_password, url, notes, tags, created_at, updated_at
+                FROM vault_entries
+            """)
+            old_entries = cursor.fetchall()
+
+            for entry in old_entries:
+                full_data = {
+                    'title': entry[1] or '',
+                    'username': entry[2] or '',
+                    'password': '',  # старый пароль зашифрован отдельно, но мы не можем его расшифровать
+                    'url': entry[4] or '',
+                    'notes': entry[5] or '',
+                    'category': 'Общее',
+                    'id': str(entry[0]),  # превращаем INTEGER в TEXT
+                    'created_at': entry[7] if entry[7] else datetime.now().isoformat(),
+                    'updated_at': entry[8] if entry[8] else datetime.now().isoformat(),
+                    'version': 1
+                }
+
+                encrypted_blob = entry[3]
+
+                tags = entry[6] if entry[6] else '[]'
+
+                cursor.execute("""
+                    INSERT INTO vault_entries_new (id, encrypted_data, created_at, updated_at, tags)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (str(entry[0]), encrypted_blob, entry[7] or datetime.now(), entry[8] or datetime.now(), tags))
+
+            logger.info(f"Перенесено {len(old_entries)} записей")
+
+            cursor.execute("DROP TABLE IF EXISTS vault_entries_old")
+            cursor.execute("ALTER TABLE vault_entries RENAME TO vault_entries_old")
+            cursor.execute("ALTER TABLE vault_entries_new RENAME TO vault_entries")
+
+            logger.info("Старая таблица сохранена как vault_entries_old")
+        else:
+            # Если старой таблицы нет, просто используем новую
+            cursor.execute("ALTER TABLE vault_entries_new RENAME TO vault_entries")
+            logger.info("Создана новая таблица vault_entries")
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_vault_created_at 
+            ON vault_entries(created_at)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_vault_updated_at 
+            ON vault_entries(updated_at)
+        """)
+
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS deleted_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                original_id TEXT NOT NULL,
+                encrypted_data BLOB NOT NULL,
+                deleted_at TIMESTAMP NOT NULL,
+                expires_at TIMESTAMP NOT NULL
+            )
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_deleted_original_id 
+            ON deleted_entries(original_id)
+        """)
+
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_deleted_expires_at 
+            ON deleted_entries(expires_at)
+        """)
+
+        cursor.execute("""
+            UPDATE db_version SET version = 3, updated_at = CURRENT_TIMESTAMP
+            WHERE id = 1
+        """)
+
+        logger.info("Миграция на версию 3 завершена!")
+        logger.info("Добавлены:")
+        logger.info("  - Новая структура vault_entries (encrypted_data вместо encrypted_password)")
+        logger.info("  - Поле deleted_at для мягкого удаления")
+        logger.info("  - Таблица deleted_entries для корзины")
+
+    def backup_before_migration(self) -> str:
         import shutil
         from datetime import datetime
 
