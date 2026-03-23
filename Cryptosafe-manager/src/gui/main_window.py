@@ -1,11 +1,12 @@
 import sys
 import os
+from datetime import datetime
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QMessageBox, QFileDialog,
                              QMenuBar, QMenu, QStatusBar, QLabel, QDialog,
                              QLineEdit, QDialogButtonBox, QFormLayout, QToolBar)
 from PyQt6.QtCore import Qt, QTimer, QEvent
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QKeySequence
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, BASE_DIR)
@@ -22,6 +23,10 @@ from src.core.crypto.authentication import AuthenticationService
 from src.core.crypto.key_manager import KeyManager
 from src.core.crypto.abstract import VaultEncryptionService
 from src.core.state_manager import StateManager
+
+# НОВЫЕ ИМПОРТЫ ДЛЯ СПРИНТА 3
+from src.core.vault.entry_manager import EntryManager
+from src.gui.widgets.entry_dialog import EntryDialog
 
 
 class LoginDialog(QDialog):
@@ -80,68 +85,6 @@ class LoginDialog(QDialog):
             self.password_input.setFocus()
 
 
-class AddEntryDialog(QDialog):
-    def __init__(self, parent, encryption_service):
-        super().__init__(parent)
-        self.encryption_service = encryption_service
-        self.result_data = None
-
-        self.setWindowTitle("Добавить запись")
-        self.setModal(True)
-        self.setFixedSize(450, 350)
-
-        layout = QFormLayout(self)
-        layout.setSpacing(15)
-
-        self.title_input = QLineEdit()
-        self.title_input.setPlaceholderText("Обязательное поле")
-        layout.addRow("Название:*", self.title_input)
-
-        self.username_input = QLineEdit()
-        self.username_input.setPlaceholderText("user@example.com")
-        layout.addRow("Логин/Email:", self.username_input)
-
-        self.password_input = QLineEdit()
-        self.password_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.password_input.setPlaceholderText("••••••••")
-        layout.addRow("Пароль:", self.password_input)
-
-        self.url_input = QLineEdit()
-        self.url_input.setPlaceholderText("https://")
-        layout.addRow("URL/Адрес:", self.url_input)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok |
-            QDialogButtonBox.StandardButton.Cancel
-        )
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-
-        ok_btn = buttons.button(QDialogButtonBox.StandardButton.Ok)
-        ok_btn.setText("Сохранить")
-
-        cancel_btn = buttons.button(QDialogButtonBox.StandardButton.Cancel)
-        cancel_btn.setText("Отмена")
-
-        layout.addRow(buttons)
-
-        self.title_input.setFocus()
-
-    def accept(self):
-        title = self.title_input.text().strip()
-        if not title:
-            QMessageBox.warning(self, "Внимание", "Название — обязательное поле")
-            return
-
-        self.result_data = {
-            'title': title,
-            'username': self.username_input.text().strip(),
-            'password': self.password_input.text().strip(),
-            'url': self.url_input.text().strip()
-        }
-        super().accept()
-
-
 class CryptoSafeApp(QMainWindow):
     def __init__(self, state, auth):
         super().__init__()
@@ -173,10 +116,21 @@ class CryptoSafeApp(QMainWindow):
 
         self.encryption_service = VaultEncryptionService(self.key_manager)
 
+        # НОВОЕ: создаем EntryManager для работы с записями
+        self.entry_manager = EntryManager(
+            db_connection=self.db,
+            key_manager=self.key_manager,
+            auth_service=self.auth,
+            event_system=self.event_bus
+        )
+
         self.create_menu()
         self.create_main_table()
         self.create_toolbar()
         self.create_status_bar()
+
+        # НОВОЕ: загружаем существующие записи из БД
+        self.load_entries()
 
         self.event_bus.subscribe(ENTRY_ADDED, self.on_entry_added)
 
@@ -278,6 +232,16 @@ class CryptoSafeApp(QMainWindow):
 
         toolbar.addSeparator()
 
+        # НОВОЕ: глобальный переключатель показа паролей (GUI-3)
+        self.show_password_action = QAction("Показать пароли", self)
+        self.show_password_action.setCheckable(True)
+        self.show_password_action.setChecked(False)
+        self.show_password_action.triggered.connect(self.toggle_show_passwords)
+        self.show_password_action.setShortcut(QKeySequence("Ctrl+Shift+P"))
+        toolbar.addAction(self.show_password_action)
+
+        toolbar.addSeparator()
+
         change_password_action = QAction("Сменить пароль", self)
         change_password_action.triggered.connect(self.open_change_password)
         toolbar.addAction(change_password_action)
@@ -289,12 +253,12 @@ class CryptoSafeApp(QMainWindow):
         layout = QVBoxLayout(central_widget)
         layout.setContentsMargins(10, 10, 10, 10)
 
+        # НОВОЕ: используем обновленный SecureTable с колонкой пароля
         self.table = SecureTable()
         layout.addWidget(self.table)
 
-        self.table.add_entry("Google", "user@gmail.com", "https://accounts.google.com")
-        self.table.add_entry("GitHub", "username", "https://github.com")
-        self.table.add_entry("Localhost", "admin", "http://localhost")
+        # НОВОЕ: подключаем сигналы таблицы
+        self.table.item_double_clicked.connect(self.on_entry_double_clicked)
 
     def create_status_bar(self):
         self.status_bar = QStatusBar()
@@ -307,6 +271,78 @@ class CryptoSafeApp(QMainWindow):
             self.status_bar.showMessage(f"Готово | Сессия активна | Вход: {login_time_str}")
         else:
             self.status_bar.showMessage("Готово | Сессия активна")
+
+    # НОВЫЙ МЕТОД: загрузка записей из БД
+    def load_entries(self):
+        """Загружает все записи из БД в таблицу"""
+        self.table.clear_all()
+
+        try:
+            entries = self.entry_manager.get_all_entries()
+            for entry in entries:
+                self.table.add_entry(
+                    entry_id=entry.get('id', ''),
+                    title=entry.get('title', ''),
+                    username=entry.get('username', ''),
+                    password=entry.get('password', ''),
+                    url=entry.get('url', ''),
+                    updated_at=entry.get('updated_at', '')[:10]
+                )
+            self.status_bar.showMessage(f"Загружено {len(entries)} записей")
+        except Exception as e:
+            print(f"Ошибка загрузки записей: {e}")
+            self.status_bar.showMessage("Ошибка загрузки записей")
+
+    # НОВЫЙ МЕТОД: переключение показа паролей
+    def toggle_show_passwords(self):
+        """Переключает показ всех паролей (GUI-3)"""
+        show = self.show_password_action.isChecked()
+        self.table.set_show_all_passwords(show)
+        if show:
+            self.show_password_action.setText("Скрыть пароли")
+            self.status_bar.showMessage("Пароли отображаются")
+        else:
+            self.show_password_action.setText("Показать пароли")
+            self.status_bar.showMessage("Пароли скрыты")
+
+    # НОВЫЙ МЕТОД: обработка двойного клика по записи
+    def on_entry_double_clicked(self, data):
+        """Открывает диалог редактирования при двойном клике"""
+        entry_id = data.get('id')
+        if entry_id:
+            self.edit_entry(entry_id)
+
+    # НОВЫЙ МЕТОД: редактирование записи
+    def edit_entry(self, entry_id: str):
+        """Редактирует запись по ID"""
+        if not self.state.is_active():
+            QMessageBox.critical(self, "Ошибка", "Сессия не активна.")
+            return
+
+        try:
+            current_data = self.entry_manager.get_entry(entry_id)
+
+            dialog = EntryDialog(self, self.entry_manager, edit_mode=True, existing_data=current_data)
+
+            if dialog.exec() == QDialog.DialogCode.Accepted:
+                new_data = dialog.get_data()
+
+                updated = self.entry_manager.update_entry(entry_id, new_data)
+
+                self.table.update_entry(
+                    entry_id=entry_id,
+                    title=updated.get('title', ''),
+                    username=updated.get('username', ''),
+                    password=updated.get('password', ''),
+                    url=updated.get('url', ''),
+                    updated_at=updated.get('updated_at', '')[:10]
+                )
+
+                self.status_bar.showMessage(f"Запись обновлена: {updated.get('title')}")
+                self.state.update_activity()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка при редактировании: {e}")
 
     def new_database(self):
         QMessageBox.information(self, "Создать",
@@ -327,70 +363,74 @@ class CryptoSafeApp(QMainWindow):
         QMessageBox.information(self, "Резервная копия",
                                 "Создание резервной копии\n(будет реализовано в спринте 8)")
 
+    # ИЗМЕНЕННЫЙ МЕТОД: редактирование выбранной записи
     def edit_selected(self):
-        selected = self.table.get_selected_values()
-        if not selected:
+        selected_ids = self.table.get_selected_entries()
+        if not selected_ids:
             QMessageBox.information(self, "Информация", "Выберите запись для редактирования")
             return
 
         if not self.state.is_active():
-            QMessageBox.critical(self, "Ошибка", "Сессия не активна. Выполните вход заново.")
+            QMessageBox.critical(self, "Ошибка", "Сессия не активна.")
             return
 
-        QMessageBox.information(self, "Редактирование",
-                                f"Редактирование записи: {selected[0]}\n(будет реализовано позже)")
+        self.edit_entry(selected_ids[0])
 
-        self.state.update_activity()
-        self.key_manager._update_activity()
-
+    # ИЗМЕНЕННЫЙ МЕТОД: удаление выбранных записей
     def delete_selected(self):
-        selected = self.table.selectedItems()
-        if not selected:
+        selected_ids = self.table.get_selected_entries()
+        if not selected_ids:
             QMessageBox.information(self, "Информация", "Выберите запись для удаления")
             return
 
         if not self.state.is_active():
-            QMessageBox.critical(self, "Ошибка", "Сессия не активна. Выполните вход заново.")
+            QMessageBox.critical(self, "Ошибка", "Сессия не активна.")
             return
 
-        reply = QMessageBox.question(self, "Подтверждение",
-                                     f"Удалить выбранные записи?",
-                                     QMessageBox.StandardButton.Yes |
-                                     QMessageBox.StandardButton.No)
+        reply = QMessageBox.question(
+            self,
+            "Подтверждение",
+            f"Удалить выбранные записи ({len(selected_ids)})?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
 
         if reply == QMessageBox.StandardButton.Yes:
-            self.table.delete_selected()
-            self.state.update_activity()
-            self.key_manager._update_activity()
-            self.status_bar.showMessage("Записи удалены")
+            for entry_id in selected_ids:
+                try:
+                    self.entry_manager.delete_entry(entry_id, soft_delete=True)
+                    self.table.remove_entry(entry_id)
+                except Exception as e:
+                    print(f"Ошибка удаления {entry_id}: {e}")
 
+            self.status_bar.showMessage(f"Удалено {len(selected_ids)} записей")
+            self.state.update_activity()
+
+    # ИЗМЕНЕННЫЙ МЕТОД: создание новой записи
     def open_add_dialog(self):
         if not self.state.is_active():
             QMessageBox.critical(self, "Ошибка", "Сессия не активна. Выполните вход заново.")
             return
 
-        dialog = AddEntryDialog(self, self.encryption_service)
+        dialog = EntryDialog(self, self.entry_manager, edit_mode=False)
+
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            data = dialog.result_data
+            data = dialog.get_data()
 
             try:
-                if data['password']:
-                    encrypted_pwd = self.encryption_service.encrypt(data['password'].encode())
-                    print(f"Пароль зашифрован, длина: {len(encrypted_pwd)} байт")
+                entry_id = self.entry_manager.create_entry(data)
 
-                self.table.add_entry(data['title'], data['username'], data['url'])
+                self.table.add_entry(
+                    entry_id=entry_id,
+                    title=data['title'],
+                    username=data.get('username', ''),
+                    password=data.get('password', ''),
+                    url=data.get('url', ''),
+                    updated_at=datetime.now().strftime("%Y-%m-%d")
+                )
 
-                self.event_bus.publish(ENTRY_ADDED, {
-                    "title": data['title'],
-                    "username": data['username'],
-                    "url": data['url']
-                })
-
+                self.status_bar.showMessage(f"Запись добавлена: {data['title']}")
                 self.state.update_activity()
-                self.key_manager._update_activity()
 
-            except ValueError as e:
-                QMessageBox.critical(self, "Ошибка", f"Не удалось зашифровать данные: {e}")
             except Exception as e:
                 QMessageBox.critical(self, "Ошибка", f"Ошибка при сохранении: {e}")
 
@@ -416,21 +456,21 @@ class CryptoSafeApp(QMainWindow):
             self,
             "О программе",
             "CryptoSafe Manager\n\n"
-            "Версия: 2.0 (Спринт 2)\n"
+            "Версия: 3.0 (Спринт 3)\n"
             "Локальный менеджер паролей с шифрованием\n\n"
-            "Реализовано:\n"
-            "• Аутентификация по мастер-паролю\n"
-            "• Argon2id и PBKDF2\n"
-            "• Безопасное кэширование ключей\n"
-            "• Система миграций БД\n"
-            "• Смена мастер-пароля (CHANGE-1)\n\n"
+            "Реализовано в Спринте 3:\n"
+            "• CRUD операции с записями\n"
+            "• AES-256-GCM шифрование каждой записи\n"
+            "• Генератор безопасных паролей\n"
+            "• Таблица с маскировкой паролей\n"
+            "• Глобальный переключатель паролей (Ctrl+Shift+P)\n"
+            "• Поиск по записям\n\n"
             f"База данных:\n{os.path.join(BASE_DIR, 'src', 'database', 'cryptosafe.db')}"
         )
 
     def on_entry_added(self, data):
         self.status_bar.showMessage(f"Добавлена запись: {data.get('title', 'без названия')}")
         self.state.update_activity()
-        self.key_manager._update_activity()
 
 
 def main():

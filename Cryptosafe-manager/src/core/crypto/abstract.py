@@ -1,5 +1,9 @@
 from abc import ABC, abstractmethod
 from typing import Optional
+import os
+import json
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
 from src.core.crypto.key_manager import KeyManager
 
 
@@ -27,21 +31,32 @@ class VaultEncryptionService(EncryptionService):
 
     def encrypt(self, data: bytes) -> bytes:
         key = self._get_key()
-        print(f"Шифруем данные ключом (первые 4 байта): {key[:4].hex()}...")
-        return data
+
+        nonce = os.urandom(12)
+
+        aesgcm = AESGCM(key)
+
+        ciphertext = aesgcm.encrypt(nonce, data, None)
+
+        return nonce + ciphertext
 
     def decrypt(self, data: bytes) -> bytes:
         key = self._get_key()
-        print(f"Расшифровываем данные ключом (первые 4 байта): {key[:4].hex()}...")
-        return data
+
+        nonce = data[:12]
+        ciphertext = data[12:]
+
+        aesgcm = AESGCM(key)
+
+        plaintext = aesgcm.decrypt(nonce, ciphertext, None)
+
+        return plaintext
 
 
 class AuditLogEncryptionService(EncryptionService):
 
     def encrypt(self, data: bytes) -> bytes:
-        key = self._get_key()
         return data
 
     def decrypt(self, data: bytes) -> bytes:
-        key = self._get_key()
         return data
