@@ -1,49 +1,8 @@
-from PyQt6.QtWidgets import (QTreeWidget, QTreeWidgetItem, QHeaderView,
-                             QMenu, QAbstractItemView, QWidget, QHBoxLayout,
-                             QPushButton, QLineEdit, QApplication)
+from PyQt6.QtWidgets import (
+    QTreeWidget, QTreeWidgetItem, QHeaderView,
+    QAbstractItemView, QApplication, QMenu
+)
 from PyQt6.QtCore import Qt, pyqtSignal
-
-
-class PasswordWidget(QWidget):
-
-    def __init__(self, password: str, parent=None):
-        super().__init__(parent)
-        self.password = password
-        self.is_visible = False
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-
-        self.password_field = QLineEdit()
-        self.password_field.setReadOnly(True)
-        self.password_field.setText("••••••••")
-        self.password_field.setAlignment(Qt.AlignmentFlag.AlignLeft)
-        self.password_field.setStyleSheet("border: none; background: transparent;")
-        layout.addWidget(self.password_field)
-
-        self.eye_button = QPushButton()
-        self.eye_button.setText("👁")
-        self.eye_button.setFixedSize(24, 24)
-        self.eye_button.setFlat(True)
-        self.eye_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.eye_button.clicked.connect(self.toggle_password)
-        layout.addWidget(self.eye_button)
-
-        layout.addStretch()
-
-    def toggle_password(self):
-        if self.is_visible:
-            self.password_field.setText("••••••••")
-            self.eye_button.setText("👁")
-            self.is_visible = False
-        else:
-            self.password_field.setText(self.password)
-            self.eye_button.setText("👁‍🗨")
-            self.is_visible = True
-
-    def get_password(self) -> str:
-        return self.password
 
 
 class SecureTable(QTreeWidget):
@@ -51,16 +10,18 @@ class SecureTable(QTreeWidget):
     item_double_clicked = pyqtSignal(dict)
     toggle_password_visibility = pyqtSignal(bool)
 
+    ICON_VISIBLE   = "👁 "
+    ICON_HIDDEN    = "🔒 "
+    ICON_WIDTH_PX  = 32
+
     def __init__(self, parent=None):
         super().__init__(parent)
 
         self.setHeaderLabels(["Название", "Имя пользователя", "Пароль", "URL/Домен", "Изменено"])
 
-        # Настройка ширины колонок
         self.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
-        self.header().setSectionResizeMode(2, QHeaderView.ResizeMode.Fixed)
-        self.header().resizeSection(2, 120)
+        self.header().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
         self.header().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
         self.header().setSectionResizeMode(4, QHeaderView.ResizeMode.ResizeToContents)
 
@@ -76,29 +37,25 @@ class SecureTable(QTreeWidget):
 
         self._items = []
         self._item_ids = []
-        self._password_widgets = []
+        self._passwords = []
+        self._password_visible = {}      # entry_id → bool
         self._show_all_passwords = False
+
+    def _get_password_display(self, password: str, visible: bool) -> str:
+        if visible:
+            return self.ICON_VISIBLE + password
+        return self.ICON_HIDDEN + "••••••••"
 
     def set_show_all_passwords(self, show: bool):
         self._show_all_passwords = show
-        for widget in self._password_widgets:
-            if show:
-                widget.password_field.setText(widget.password)
-                widget.eye_button.setText("👁‍🗨")
-                widget.is_visible = True
-            else:
-                widget.password_field.setText("••••••••")
-                widget.eye_button.setText("👁")
-                widget.is_visible = False
-        self.toggle_password_visibility.emit(show)
 
-    def _extract_domain(self, url: str) -> str:
-        if not url:
-            return ""
-        url = url.replace("https://", "").replace("http://", "")
-        url = url.replace("www.", "")
-        domain = url.split("/")[0]
-        return domain
+        for entry_id in self._item_ids:
+            self._password_visible[entry_id] = show
+
+        for i, item in enumerate(self._items):
+            item.setText(2, self._get_password_display(self._passwords[i], show))
+
+        self.toggle_password_visibility.emit(show)
 
     def add_entry(self, entry_id: str, title: str, username: str,
                   password: str, url: str, updated_at: str = ""):
@@ -109,15 +66,15 @@ class SecureTable(QTreeWidget):
 
         domain = self._extract_domain(url)
 
-        item = QTreeWidgetItem([title, masked_username, "", domain, updated_at])
+        visible = self._show_all_passwords
+        self._password_visible[entry_id] = visible
+        display_pwd = self._get_password_display(password, visible)
+
+        item = QTreeWidgetItem([title, masked_username, display_pwd, domain, updated_at])
 
         self._items.append(item)
         self._item_ids.append(entry_id)
-
-        password_widget = PasswordWidget(password)
-        self._password_widgets.append(password_widget)
-
-        self.setItemWidget(item, 2, password_widget)
+        self._passwords.append(password)
 
         self.addTopLevelItem(item)
 
@@ -134,21 +91,15 @@ class SecureTable(QTreeWidget):
 
                 domain = self._extract_domain(url)
 
+                self._passwords[i] = password
+                visible = self._password_visible.get(entry_id, False)
+                display_pwd = self._get_password_display(password, visible)
+
                 item.setText(0, title)
                 item.setText(1, masked_username)
+                item.setText(2, display_pwd)
                 item.setText(3, domain)
                 item.setText(4, updated_at)
-
-                widget = self._password_widgets[i]
-                widget.password = password
-                if self._show_all_passwords:
-                    widget.password_field.setText(password)
-                    widget.eye_button.setText("👁‍🗨")
-                    widget.is_visible = True
-                else:
-                    widget.password_field.setText("••••••••")
-                    widget.eye_button.setText("👁")
-                    widget.is_visible = False
                 break
 
     def remove_entry(self, entry_id: str):
@@ -158,7 +109,8 @@ class SecureTable(QTreeWidget):
                 self.takeTopLevelItem(self.indexOfTopLevelItem(item))
                 del self._items[i]
                 del self._item_ids[i]
-                del self._password_widgets[i]
+                del self._passwords[i]
+                self._password_visible.pop(entry_id, None)
                 break
 
     def get_selected_entries(self) -> list:
@@ -174,13 +126,14 @@ class SecureTable(QTreeWidget):
     def get_entry_password(self, entry_id: str) -> str:
         for i, eid in enumerate(self._item_ids):
             if eid == entry_id:
-                return self._password_widgets[i].get_password()
+                return self._passwords[i]
         return ""
 
     def clear_all(self):
         self._items.clear()
         self._item_ids.clear()
-        self._password_widgets.clear()
+        self._passwords.clear()
+        self._password_visible.clear()
         self.clear()
 
     def _on_selection_changed(self):
@@ -196,6 +149,70 @@ class SecureTable(QTreeWidget):
             if it is item:
                 self.item_double_clicked.emit({'id': self._item_ids[i]})
                 break
+
+    def _extract_domain(self, url: str) -> str:
+        if not url:
+            return ""
+        url = url.replace("https://", "").replace("http://", "")
+        url = url.replace("www.", "")
+        domain = url.split("/")[0]
+        return domain
+
+    def mousePressEvent(self, event):
+        if event.button() != Qt.MouseButton.LeftButton:
+            return super().mousePressEvent(event)
+
+        pos = event.pos()
+        item = self.itemAt(pos)
+        if not item:
+            return super().mousePressEvent(event)
+
+        column = self.columnAt(pos.x())
+        if column != 2:
+            return super().mousePressEvent(event)
+
+        header = self.header()
+        section_left = header.sectionViewportPosition(column)
+
+        rel_x = pos.x() - section_left
+
+        if 0 <= rel_x <= 40:
+            idx = self._items.index(item)
+            entry_id = self._item_ids[idx]
+
+            was_visible = self._password_visible.get(entry_id, False)
+            now_visible = not was_visible
+
+            if self._show_all_passwords:
+                self._show_all_passwords = False
+                self.toggle_password_visibility.emit(False)
+
+            self._password_visible[entry_id] = now_visible
+            display = self._get_password_display(self._passwords[idx], now_visible)
+            item.setText(2, display)
+
+            event.accept()
+            return
+
+        return super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        pos = event.pos()
+        item = self.itemAt(pos)
+        if item:
+            col = self.columnAt(pos.x())
+            if col == 2:
+                rect = self.visualItemRect(item)
+                rel_x = pos.x() - rect.x()
+                if rel_x <= self.ICON_WIDTH_PX:
+                    QApplication.setOverrideCursor(Qt.CursorShape.PointingHandCursor)
+                    return
+        QApplication.restoreOverrideCursor()
+        super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        QApplication.restoreOverrideCursor()
+        super().leaveEvent(event)
 
     def contextMenuEvent(self, event):
         menu = QMenu(self)
@@ -232,7 +249,7 @@ class SecureTable(QTreeWidget):
         elif action == copy_username:
             QApplication.clipboard().setText(item.text(1))
         elif action == copy_password:
-            password = self._password_widgets[idx].get_password()
+            password = self._passwords[idx]
             QApplication.clipboard().setText(password)
         elif action == copy_url:
             QApplication.clipboard().setText(item.text(3))
