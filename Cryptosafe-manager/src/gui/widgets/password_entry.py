@@ -17,7 +17,7 @@ class PasswordEntry(QWidget):
         layout.addWidget(self.show_checkbox)
 
     def toggle_password(self, state):
-        if state == Qt.CheckState.Checked.value:  # 2 = отмечен
+        if state == 2:
             self.entry.setEchoMode(QLineEdit.EchoMode.Normal)
         else:
             self.entry.setEchoMode(QLineEdit.EchoMode.Password)

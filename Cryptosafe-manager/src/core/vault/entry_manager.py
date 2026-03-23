@@ -14,19 +14,10 @@ class EntryManager:
         self.auth_service = auth_service
         self.event_system = event_system
 
-        encryption_key = self._get_encryption_key()
-
-        self.encryption = EncryptionService(encryption_key)
+        # Передаем key_manager в EncryptionService
+        self.encryption = EncryptionService(key_manager)
 
         self.generator = PasswordGenerator()
-
-    def _get_encryption_key(self) -> bytes:
-        cached_key = self.key_manager.get_cached_key()
-
-        if cached_key is None:
-            raise ValueError("Ключ шифрования не найден. Пользователь не авторизован или сессия истекла.")
-
-        return cached_key
 
     def _update_activity(self):
         if self.auth_service:

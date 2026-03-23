@@ -247,7 +247,7 @@ class AuthenticationService:
     def update_activity(self):
         self.last_activity = time.time()
         if self.key_manager:
-            self.key_manager._update_activity()
+            self.key_manager.update_activity()
 
     def _check_password_strength(self, password: str) -> Tuple[bool, List[str]]:
         errors = []

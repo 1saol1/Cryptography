@@ -51,38 +51,37 @@ class Database:
 
     def get_user_version(self):
         try:
-            with self.connect() as conn:
-                cursor = conn.execute("PRAGMA user_version")
-                return cursor.fetchone()[0]
+            conn = self.connect()
+            cursor = conn.execute("PRAGMA user_version")
+            return cursor.fetchone()[0]
         except Exception:
             return 0
 
     def get_db_version(self):
         try:
-            with self.connect() as conn:
-                cursor = conn.execute(
-                    "SELECT version FROM db_version WHERE id = 1"
-                )
-                row = cursor.fetchone()
-                if row:
-                    return row[0]
+            conn = self.connect()
+            cursor = conn.execute(
+                "SELECT version FROM db_version WHERE id = 1"
+            )
+            row = cursor.fetchone()
+            if row:
+                return row[0]
         except sqlite3.OperationalError:
             pass
-
         return self.get_user_version()
 
     def execute(self, query: str, params: tuple = ()):
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            cursor.execute(query, params)
-            conn.commit()
-            return cursor.fetchall()
+        conn = self.connect()
+        cursor = conn.cursor()
+        cursor.execute(query, params)
+        conn.commit()
+        return cursor
 
     def execute_many(self, query: str, params_list: list):
-        with self.connect() as conn:
-            cursor = conn.cursor()
-            cursor.executemany(query, params_list)
-            conn.commit()
+        conn = self.connect()
+        cursor = conn.cursor()
+        cursor.executemany(query, params_list)
+        conn.commit()
 
     def __enter__(self):
         return self

@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLineEdit,
                              QTextEdit, QPushButton, QHBoxLayout, QLabel,
-                             QMessageBox, QComboBox, QWidget)
+                             QMessageBox, QComboBox)
 
 from .password_entry import PasswordEntry
 
@@ -23,6 +23,7 @@ class EntryDialog(QDialog):
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
+
         form_layout = QFormLayout()
         form_layout.setSpacing(10)
 
@@ -41,12 +42,9 @@ class EntryDialog(QDialog):
         self.strength_label.setStyleSheet("font-size: 10px;")
         form_layout.addRow("", self.strength_label)
 
-        gen_layout = QHBoxLayout()
         gen_btn = QPushButton("Сгенерировать пароль")
         gen_btn.clicked.connect(self._generate_password)
-        gen_layout.addWidget(gen_btn)
-        gen_layout.addStretch()
-        form_layout.addRow("", gen_layout)
+        form_layout.addRow("", gen_btn)
 
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText("https://example.com")
@@ -66,10 +64,10 @@ class EntryDialog(QDialog):
         buttons_layout = QHBoxLayout()
         buttons_layout.addStretch()
 
-        self.save_btn = QPushButton("Сохранить")
-        self.save_btn.clicked.connect(self._accept)
-        self.save_btn.setDefault(True)
-        buttons_layout.addWidget(self.save_btn)
+        save_btn = QPushButton("Сохранить")
+        save_btn.clicked.connect(self._accept)
+        save_btn.setDefault(True)
+        buttons_layout.addWidget(save_btn)
 
         cancel_btn = QPushButton("Отмена")
         cancel_btn.clicked.connect(self.reject)
@@ -101,26 +99,47 @@ class EntryDialog(QDialog):
         self._check_password_strength()
 
     def _check_password_strength(self):
-        password = self.password_input.get()
+        try:
+            password = self.password_input.get()
 
-        if not password:
-            self.strength_label.setText("")
-            return
+            if not password:
+                self.strength_label.setText("")
+                return
 
-        strength = self.entry_manager.check_password_strength(password)
+            strength = self.entry_manager.check_password_strength(password)
 
-        if strength['score'] >= 3:
-            color = "green"
-            text = f"{strength['strength']} - {strength['feedback']}"
-        elif strength['score'] >= 2:
-            color = "orange"
-            text = f"{strength['strength']} - {strength['feedback']}"
-        else:
-            color = "red"
-            text = f"{strength['strength']} - {strength['feedback']}"
+            # Проверяем, что strength - это словарь с нужными ключами
+            if isinstance(strength, dict) and 'score' in strength and 'strength' in strength and 'feedback' in strength:
+                if strength['score'] >= 3:
+                    color = "green"
+                    text = f"{strength['strength']} - {strength['feedback']}"
+                elif strength['score'] >= 2:
+                    color = "orange"
+                    text = f"{strength['strength']} - {strength['feedback']}"
+                else:
+                    color = "red"
+                    text = f"{strength['strength']} - {strength['feedback']}"
+            else:
+                if len(password) >= 12:
+                    color = "green"
+                    text = f"Длина: {len(password)} символов"
+                elif len(password) >= 8:
+                    color = "orange"
+                    text = f"Длина: {len(password)} символов"
+                else:
+                    color = "red"
+                    text = f"Длина: {len(password)} символов (минимум 8)"
 
-        self.strength_label.setText(text)
-        self.strength_label.setStyleSheet(f"color: {color}; font-size: 10px;")
+            self.strength_label.setText(text)
+            self.strength_label.setStyleSheet(f"color: {color}; font-size: 10px;")
+
+        except Exception as e:
+            print(f"Ошибка в _check_password_strength: {e}")
+            password = self.password_input.get()
+            if password:
+                self.strength_label.setText(f"Длина пароля: {len(password)} символов")
+            else:
+                self.strength_label.setText("")
 
     def _validate(self) -> bool:
         title = self.title_input.text().strip()
@@ -138,21 +157,20 @@ class EntryDialog(QDialog):
         strength = self.entry_manager.check_password_strength(password)
         if not strength['is_strong']:
             reply = QMessageBox.question(
-                self,
-                "Слабый пароль",
-                f"Пароль: {strength['strength']}\n{strength['feedback']}\n\n"
-                "Вы уверены, что хотите использовать этот пароль?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-            )
+                 self,
+                 "Слабый пароль",
+                 f"Пароль: {strength['strength']}\n{strength['feedback']}\n\n"
+                 "Вы уверены, что хотите использовать этот пароль?",
+                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+             )
             if reply != QMessageBox.StandardButton.Yes:
-                return False
+                 return False
 
         return True
 
     def _accept(self):
         if not self._validate():
             return
-
         self.accept()
 
     def get_data(self) -> dict:

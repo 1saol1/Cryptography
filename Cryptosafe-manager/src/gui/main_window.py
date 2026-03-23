@@ -116,7 +116,6 @@ class CryptoSafeApp(QMainWindow):
 
         self.encryption_service = VaultEncryptionService(self.key_manager)
 
-        # НОВОЕ: создаем EntryManager для работы с записями
         self.entry_manager = EntryManager(
             db_connection=self.db,
             key_manager=self.key_manager,
@@ -129,7 +128,6 @@ class CryptoSafeApp(QMainWindow):
         self.create_toolbar()
         self.create_status_bar()
 
-        # НОВОЕ: загружаем существующие записи из БД
         self.load_entries()
 
         self.event_bus.subscribe(ENTRY_ADDED, self.on_entry_added)
@@ -293,9 +291,7 @@ class CryptoSafeApp(QMainWindow):
             print(f"Ошибка загрузки записей: {e}")
             self.status_bar.showMessage("Ошибка загрузки записей")
 
-    # НОВЫЙ МЕТОД: переключение показа паролей
     def toggle_show_passwords(self):
-        """Переключает показ всех паролей (GUI-3)"""
         show = self.show_password_action.isChecked()
         self.table.set_show_all_passwords(show)
         if show:
@@ -305,16 +301,12 @@ class CryptoSafeApp(QMainWindow):
             self.show_password_action.setText("Показать пароли")
             self.status_bar.showMessage("Пароли скрыты")
 
-    # НОВЫЙ МЕТОД: обработка двойного клика по записи
     def on_entry_double_clicked(self, data):
-        """Открывает диалог редактирования при двойном клике"""
         entry_id = data.get('id')
         if entry_id:
             self.edit_entry(entry_id)
 
-    # НОВЫЙ МЕТОД: редактирование записи
     def edit_entry(self, entry_id: str):
-        """Редактирует запись по ID"""
         if not self.state.is_active():
             QMessageBox.critical(self, "Ошибка", "Сессия не активна.")
             return
@@ -363,7 +355,6 @@ class CryptoSafeApp(QMainWindow):
         QMessageBox.information(self, "Резервная копия",
                                 "Создание резервной копии\n(будет реализовано в спринте 8)")
 
-    # ИЗМЕНЕННЫЙ МЕТОД: редактирование выбранной записи
     def edit_selected(self):
         selected_ids = self.table.get_selected_entries()
         if not selected_ids:
@@ -376,7 +367,6 @@ class CryptoSafeApp(QMainWindow):
 
         self.edit_entry(selected_ids[0])
 
-    # ИЗМЕНЕННЫЙ МЕТОД: удаление выбранных записей
     def delete_selected(self):
         selected_ids = self.table.get_selected_entries()
         if not selected_ids:
@@ -405,7 +395,6 @@ class CryptoSafeApp(QMainWindow):
             self.status_bar.showMessage(f"Удалено {len(selected_ids)} записей")
             self.state.update_activity()
 
-    # ИЗМЕНЕННЫЙ МЕТОД: создание новой записи
     def open_add_dialog(self):
         if not self.state.is_active():
             QMessageBox.critical(self, "Ошибка", "Сессия не активна. Выполните вход заново.")
