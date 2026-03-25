@@ -87,7 +87,7 @@ class EntryManager:
         self._update_activity()
 
         cursor = self.db.execute(
-            "SELECT encrypted_data FROM vault_entries WHERE id = ? AND deleted_at IS NULL",
+            "SELECT encrypted_data, tags FROM vault_entries WHERE id = ? AND deleted_at IS NULL",
             (entry_id,)
         )
         row = cursor.fetchone()
@@ -98,13 +98,22 @@ class EntryManager:
         encrypted_blob = row[0]
         data = self.encryption.decrypt(encrypted_blob)
 
+        tags = row[1]
+        if tags:
+            try:
+                data['tags'] = json.loads(tags)
+            except:
+                data['tags'] = []
+        else:
+            data['tags'] = []
+
         return data
 
     def get_all_entries(self) -> List[Dict[str, Any]]:
         self._update_activity()
 
         cursor = self.db.execute(
-            "SELECT id FROM vault_entries WHERE deleted_at IS NULL ORDER BY updated_at DESC"
+            "SELECT id, tags FROM vault_entries WHERE deleted_at IS NULL ORDER BY updated_at DESC"
         )
         rows = cursor.fetchall()
 
@@ -268,37 +277,72 @@ class EntryManager:
 
         return False
 
+    def get_filtered_entries(self, filters: dict = None) -> List[Dict[str, Any]]:
+        all_entries = self.get_all_entries()
+
+        if not filters:
+            return all_entries
+
+        results = []
+        for entry in all_entries:
+            if self._matches_filters(entry, filters):
+                results.append(entry)
+
+        return results
+
     def _matches_filters(self, entry: dict, filters: dict) -> bool:
-        if filters['title']:
-            title = entry.get('title', '')
-            if not self._fuzzy_match(title, filters['title']):
+        if 'category' in filters:
+            entry_category = entry.get('category', 'Общее')
+            if entry_category != filters['category']:
                 return False
 
-        if filters['username']:
-            username = entry.get('username', '')
-            if not self._fuzzy_match(username, filters['username']):
+        if 'tag' in filters:
+            search_tag = filters['tag'].lower()
+            entry_tags = entry.get('tags', [])
+
+            if isinstance(entry_tags, str):
+                try:
+                    import json
+                    entry_tags = json.loads(entry_tags)
+                except:
+                    entry_tags = []
+
+            found = False
+            for tag in entry_tags:
+                if search_tag in tag.lower():
+                    found = True
+                    break
+
+            if not found:
                 return False
 
-        if filters['url']:
-            url = entry.get('url', '')
-            if not self._fuzzy_match(url, filters['url']):
-                return False
+        # Фильтр по дате
+        if 'date' in filters:
+            date_filters = filters['date']
+            updated_at = entry.get('updated_at', '')
+            if updated_at:
+                try:
+                    entry_date = datetime.fromisoformat(updated_at).date()
+                    if 'from' in date_filters and entry_date < date_filters['from']:
+                        return False
+                    if 'to' in date_filters and entry_date > date_filters['to']:
+                        return False
+                except:
+                    pass
 
-        if filters['notes']:
-            notes = entry.get('notes', '')
-            if not self._fuzzy_match(notes, filters['notes']):
-                return False
-
-        if filters['global']:
-            all_text = ' '.join([
-                entry.get('title', ''),
-                entry.get('username', ''),
-                entry.get('url', ''),
-                entry.get('notes', '')
-            ])
-
-            if not self._fuzzy_match(all_text, filters['global']):
-                return False
+        if 'strength' in filters:
+            password = entry.get('password', '')
+            strength = self.check_password_strength(password)
+            if filters['strength'] == 'weak':
+                if strength.get('score', 0) >= 2:
+                    return False
+            elif filters['strength'] == 'medium':
+                score = strength.get('score', 0)
+                if score < 2 or score > 2:
+                    return False
+            elif filters['strength'] == 'strong':
+                if strength.get('score', 0) < 3:
+                    return False
 
         return True
 

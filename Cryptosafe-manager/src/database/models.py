@@ -47,6 +47,11 @@ def create_tables(conn):
     """)
 
     cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_vault_tags 
+        ON vault_entries(tags)
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS audit_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             action TEXT NOT NULL,
@@ -95,11 +100,6 @@ def create_tables(conn):
     cursor.execute("""
         CREATE INDEX IF NOT EXISTS idx_deleted_expires_at 
         ON deleted_entries(expires_at)
-    """)
-
-    cursor.execute("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS vault_fts 
-        USING fts5(title, username, url, notes, content=vault_entries)
     """)
 
     cursor.execute("SELECT COUNT(*) FROM settings")

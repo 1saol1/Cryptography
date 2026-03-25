@@ -1,15 +1,14 @@
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
                              QComboBox, QDateEdit, QPushButton, QLabel,
-                             QGroupBox, QCheckBox, QMessageBox)
+                             QGroupBox, QCheckBox, QLineEdit)
 from PyQt6.QtCore import Qt, QDate
 
 
 class FilterDialog(QDialog):
-
     def __init__(self, parent=None, entry_manager=None):
         super().__init__(parent)
         self.entry_manager = entry_manager
-        self.filters = {}  
+        self.filters = {}
 
         self.setWindowTitle("Фильтры")
         self.setModal(True)
@@ -17,7 +16,7 @@ class FilterDialog(QDialog):
 
         layout = QVBoxLayout(self)
 
-        # ========== Фильтр по категории ==========
+        # Фильтр по категории
         category_group = QGroupBox("Категория")
         category_layout = QFormLayout(category_group)
 
@@ -29,22 +28,21 @@ class FilterDialog(QDialog):
 
         layout.addWidget(category_group)
 
-        # ========== Фильтр по тегам ==========
+        # Фильтр по тегам
         tags_group = QGroupBox("Теги")
         tags_layout = QFormLayout(tags_group)
 
-        self.tag_input = QComboBox()
-        self.tag_input.setEditable(True)
-        self.tag_input.setPlaceholderText("Введите тег...")
+        self.tag_input = QLineEdit()
+        self.tag_input.setPlaceholderText("Введите тег (например: важное, работа)")
+        self.tag_input.setToolTip("Поиск записей, содержащих этот тег")
         tags_layout.addRow("Тег:", self.tag_input)
 
         layout.addWidget(tags_group)
 
-        # ========== Фильтр по дате ==========
+        # Фильтр по дате
         date_group = QGroupBox("Дата изменения")
         date_layout = QFormLayout(date_group)
 
-        # Чекбоксы для включения фильтров
         self.enable_date_from = QCheckBox("От:")
         self.enable_date_to = QCheckBox("До:")
 
@@ -56,7 +54,6 @@ class FilterDialog(QDialog):
         self.date_to.setDate(QDate.currentDate())
         self.date_to.setCalendarPopup(True)
 
-        # Layout для дат
         from_layout = QHBoxLayout()
         from_layout.addWidget(self.enable_date_from)
         from_layout.addWidget(self.date_from)
@@ -69,20 +66,20 @@ class FilterDialog(QDialog):
 
         layout.addWidget(date_group)
 
-        # ========== Фильтр по надежности пароля ==========
+        # Фильтр по надежности пароля
         strength_group = QGroupBox("Надежность пароля")
         strength_layout = QFormLayout(strength_group)
 
         self.strength_combo = QComboBox()
         self.strength_combo.addItem("Все пароли", "")
-        self.strength_combo.addItem("Только слабые (score 0-1)", "weak")
-        self.strength_combo.addItem("Только средние (score 2)", "medium")
-        self.strength_combo.addItem("Только надежные (score 3-4)", "strong")
+        self.strength_combo.addItem("Только слабые", "weak")
+        self.strength_combo.addItem("Только средние", "medium")
+        self.strength_combo.addItem("Только надежные", "strong")
         strength_layout.addRow("Надежность:", self.strength_combo)
 
         layout.addWidget(strength_group)
 
-        # ========== Кнопки ==========
+        # Кнопки
         buttons_layout = QHBoxLayout()
         buttons_layout.addStretch()
 
@@ -101,29 +98,23 @@ class FilterDialog(QDialog):
         layout.addLayout(buttons_layout)
 
     def reset_filters(self):
-        """Сбрасывает все фильтры"""
         self.category_combo.setCurrentIndex(0)
         self.tag_input.clear()
-        self.tag_input.setEditText("")
         self.enable_date_from.setChecked(False)
         self.enable_date_to.setChecked(False)
         self.strength_combo.setCurrentIndex(0)
 
     def get_filters(self) -> dict:
-        """Возвращает словарь с выбранными фильтрами"""
         filters = {}
 
-        # Фильтр по категории
         category = self.category_combo.currentText()
         if category and category != "Все категории":
             filters['category'] = category
 
-        # Фильтр по тегу
-        tag = self.tag_input.currentText().strip()
+        tag = self.tag_input.text().strip()
         if tag:
             filters['tag'] = tag
 
-        # Фильтр по дате
         date_filters = {}
         if self.enable_date_from.isChecked():
             date_filters['from'] = self.date_from.date().toPyDate()
@@ -132,7 +123,6 @@ class FilterDialog(QDialog):
         if date_filters:
             filters['date'] = date_filters
 
-        # Фильтр по надежности
         strength = self.strength_combo.currentData()
         if strength:
             filters['strength'] = strength

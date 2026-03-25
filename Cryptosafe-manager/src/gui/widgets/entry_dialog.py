@@ -43,15 +43,12 @@ class EntryDialog(QDialog):
         self.strength_label.setStyleSheet("font-size: 10px;")
         form_layout.addRow("", self.strength_label)
 
-        # Горизонтальный layout для кнопок генерации
         gen_layout = QHBoxLayout()
 
-        # Кнопка "Сгенерировать пароль"
         self.gen_btn = QPushButton("Сгенерировать пароль")
         self.gen_btn.clicked.connect(self._generate_password_simple)
         gen_layout.addWidget(self.gen_btn)
 
-        # Кнопка настроек (шестеренка)
         self.settings_btn = QPushButton("⚙️")
         self.settings_btn.setFixedSize(30, 30)
         self.settings_btn.setToolTip("Настройки генерации пароля")
@@ -73,6 +70,10 @@ class EntryDialog(QDialog):
         self.category_input.addItems(["Общее", "Работа", "Личное", "Почта", "Соцсети", "Банки"])
         self.category_input.setEditable(True)
         form_layout.addRow("Категория:", self.category_input)
+
+        self.tags_input = QLineEdit()
+        self.tags_input.setPlaceholderText("тег1, тег2, тег3")
+        form_layout.addRow("Теги:", self.tags_input)
 
         layout.addLayout(form_layout)
 
@@ -105,6 +106,12 @@ class EntryDialog(QDialog):
             self.category_input.setCurrentIndex(index)
         else:
             self.category_input.setEditText(category)
+
+        tags = data.get('tags', [])
+        if isinstance(tags, list):
+            self.tags_input.setText(', '.join(tags))
+        elif isinstance(tags, str):
+            self.tags_input.setText(tags)
 
         self._check_password_strength()
 
@@ -219,11 +226,18 @@ class EntryDialog(QDialog):
         self.accept()
 
     def get_data(self) -> dict:
+        tags_text = self.tags_input.text().strip()
+        if tags_text:
+            tags = [t.strip() for t in tags_text.split(',') if t.strip()]
+        else:
+            tags = []
+
         return {
             'title': self.title_input.text().strip(),
             'username': self.username_input.text().strip(),
             'password': self.password_input.get(),
             'url': self.url_input.text().strip(),
             'notes': self.notes_input.toPlainText().strip(),
-            'category': self.category_input.currentText()
+            'category': self.category_input.currentText(),
+            'tags': tags
         }

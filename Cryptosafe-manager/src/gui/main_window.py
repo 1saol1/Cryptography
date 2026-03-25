@@ -348,10 +348,10 @@ class CryptoSafeApp(QMainWindow):
     def _entry_matches_search(self, entry: dict, query: str) -> bool:
         query = query.lower()
         return (
-                query in entry.get('title', '').lower() or
-                query in entry.get('username', '').lower() or
-                query in entry.get('url', '').lower() or
-                query in entry.get('notes', '').lower()
+            query in entry.get('title', '').lower() or
+            query in entry.get('username', '').lower() or
+            query in entry.get('url', '').lower() or
+            query in entry.get('notes', '').lower()
         )
 
     def clear_search(self):

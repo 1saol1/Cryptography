@@ -1,34 +1,81 @@
 import sqlite3
 import logging
+import threading
+from queue import Queue
 from .models import create_tables
 from .migrations import MigrationManager
 
 logger = logging.getLogger(__name__)
 
 
+class ConnectionPool:
+
+    def __init__(self, db_path: str, max_connections: int = 5):
+        self.db_path = db_path
+        self.max_connections = max_connections
+        self._pool = Queue(maxsize=max_connections)
+        self._lock = threading.Lock()
+        self._created = 0
+
+        self._initialize_pool()
+
+    def _initialize_pool(self):
+        for _ in range(self.max_connections):
+            self._create_connection()
+
+    def _create_connection(self):
+        conn = sqlite3.connect(
+            self.db_path,
+            check_same_thread=False,
+            timeout=10.0
+        )
+        conn.row_factory = sqlite3.Row
+        self._pool.put(conn)
+        self._created += 1
+
+    def get_connection(self):
+        try:
+            conn = self._pool.get(timeout=5)
+            return conn
+        except:
+            logger.error("Таймаут при получении соединения из пула")
+            raise
+
+    def return_connection(self, conn):
+        self._pool.put(conn)
+
+    def close_all(self):
+        while not self._pool.empty():
+            try:
+                conn = self._pool.get_nowait()
+                conn.close()
+            except:
+                pass
+
+
 class Database:
     def __init__(self, db_path):
         self.db_path = db_path
-        self._connection = None
+        self._pool = ConnectionPool(db_path)
         self._migrator = MigrationManager(db_path)
+        self._local = threading.local()
 
-    def connect(self):
-        if self._connection is None:
-            self._connection = sqlite3.connect(self.db_path)
-        return self._connection
+    def get_connection(self):
+        if not hasattr(self._local, 'connection'):
+            self._local.connection = self._pool.get_connection()
+        return self._local.connection
 
-    def close(self):
-        if self._connection:
-            self._connection.close()
-            self._connection = None
+    def return_connection(self):
+        if hasattr(self._local, 'connection'):
+            self._pool.return_connection(self._local.connection)
+            delattr(self._local, 'connection')
 
     def initialize(self):
-        conn = self.connect()
+        conn = self.get_connection()
 
         create_tables(conn)
         conn.commit()
 
-        # Получаем текущую версию
         current_version = self.get_user_version()
         logger.info(f"Текущая версия БД: {current_version}")
 
@@ -47,23 +94,25 @@ class Database:
             logger.info(f"База данных версии {current_version}, миграции не требуются")
 
         conn.commit()
+        self.return_connection()
         logger.info("База данных инициализирована")
 
     def get_user_version(self):
         try:
-            conn = self.connect()
+            conn = self.get_connection()
             cursor = conn.execute("PRAGMA user_version")
-            return cursor.fetchone()[0]
+            version = cursor.fetchone()[0]
+            self.return_connection()
+            return version
         except Exception:
             return 0
 
     def get_db_version(self):
         try:
-            conn = self.connect()
-            cursor = conn.execute(
-                "SELECT version FROM db_version WHERE id = 1"
-            )
+            conn = self.get_connection()
+            cursor = conn.execute("SELECT version FROM db_version WHERE id = 1")
             row = cursor.fetchone()
+            self.return_connection()
             if row:
                 return row[0]
         except sqlite3.OperationalError:
@@ -71,17 +120,22 @@ class Database:
         return self.get_user_version()
 
     def execute(self, query: str, params: tuple = ()):
-        conn = self.connect()
+        conn = self.get_connection()
         cursor = conn.cursor()
         cursor.execute(query, params)
         conn.commit()
+        self.return_connection()
         return cursor
 
     def execute_many(self, query: str, params_list: list):
-        conn = self.connect()
+        conn = self.get_connection()
         cursor = conn.cursor()
         cursor.executemany(query, params_list)
         conn.commit()
+        self.return_connection()
+
+    def close(self):
+        self._pool.close_all()
 
     def __enter__(self):
         return self
