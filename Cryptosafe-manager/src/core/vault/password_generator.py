@@ -30,7 +30,6 @@ class PasswordGenerator:
             'special': self.SPECIAL
         }
 
-
     def generate(self,
                  length: int = 16,
                  use_uppercase: bool = True,
@@ -47,55 +46,48 @@ class PasswordGenerator:
         if not any([use_uppercase, use_lowercase, use_digits, use_special]):
             use_lowercase = True
 
-        allowed_chars = ""
-        required_sets = []
+        max_attempts = 1000
+        for attempt in range(max_attempts):
+            allowed_chars = ""
+            required_sets = []
 
-        if use_lowercase:
-            chars = self._filter_chars(self.LOWERCASE, exclude_ambiguous)
-            allowed_chars += chars
-            required_sets.append(chars)
+            if use_lowercase:
+                chars = self._filter_chars(self.LOWERCASE, exclude_ambiguous)
+                allowed_chars += chars
+                required_sets.append(chars)
 
-        if use_uppercase:
-            chars = self._filter_chars(self.UPPERCASE, exclude_ambiguous)
-            allowed_chars += chars
-            required_sets.append(chars)
+            if use_uppercase:
+                chars = self._filter_chars(self.UPPERCASE, exclude_ambiguous)
+                allowed_chars += chars
+                required_sets.append(chars)
 
-        if use_digits:
-            chars = self._filter_chars(self.DIGITS, exclude_ambiguous)
-            allowed_chars += chars
-            required_sets.append(chars)
+            if use_digits:
+                chars = self._filter_chars(self.DIGITS, exclude_ambiguous)
+                allowed_chars += chars
+                required_sets.append(chars)
 
-        if use_special:
-            allowed_chars += self.SPECIAL
-            required_sets.append(self.SPECIAL)
+            if use_special:
+                allowed_chars += self.SPECIAL  # спецсимволы не фильтруем по неоднозначности
+                required_sets.append(self.SPECIAL)
 
-        password_chars = []
+            if not allowed_chars:
+                raise ValueError("Не выбрано ни одного типа символов")
 
-        for charset in required_sets:
-            if charset:
-                password_chars.append(secrets.choice(charset))
+            password_chars = [secrets.choice(charset) for charset in required_sets if charset]
 
-        remaining = length - len(password_chars)
-        for _ in range(remaining):
-            password_chars.append(secrets.choice(allowed_chars))
+            remaining = length - len(password_chars)
+            for _ in range(remaining):
+                password_chars.append(secrets.choice(allowed_chars))
 
-        secrets.SystemRandom().shuffle(password_chars)
+            secrets.SystemRandom().shuffle(password_chars)
+            password = ''.join(password_chars)
 
-        password = ''.join(password_chars)
+            strength = self.check_strength(password)
+            if strength['is_strong'] and password not in self._recent_passwords:
+                self._add_to_history(password)
+                return password
 
-        strength = self.check_strength(password)
-        if not strength['is_strong']:
-
-            return self.generate(length, use_uppercase, use_lowercase,
-                                 use_digits, use_special, exclude_ambiguous)
-
-        if password in self._recent_passwords:
-            return self.generate(length, use_uppercase, use_lowercase,
-                                 use_digits, use_special, exclude_ambiguous)
-
-        self._add_to_history(password)
-
-        return password
+        raise RuntimeError("Не удалось сгенерировать достаточно сильный пароль. Попробуйте ослабить требования.")
 
     def generate_pin(self, length: int = 6) -> str:
         if length < 4:

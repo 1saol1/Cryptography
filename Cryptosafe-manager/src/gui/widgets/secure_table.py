@@ -3,16 +3,18 @@ from PyQt6.QtWidgets import (
     QAbstractItemView, QApplication, QMenu
 )
 from PyQt6.QtCore import Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QBrush
 
 
 class SecureTable(QTreeWidget):
     item_selected = pyqtSignal(dict)
     item_double_clicked = pyqtSignal(dict)
+    item_delete_requested = pyqtSignal(dict)
     toggle_password_visibility = pyqtSignal(bool)
 
-    ICON_VISIBLE   = "👁 "
-    ICON_HIDDEN    = "🔒 "
-    ICON_WIDTH_PX  = 32
+    ICON_VISIBLE = "👁 "
+    ICON_HIDDEN = "🔒 "
+    ICON_WIDTH_PX = 32
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -38,8 +40,11 @@ class SecureTable(QTreeWidget):
         self._items = []
         self._item_ids = []
         self._passwords = []
-        self._password_visible = {}      # entry_id → bool
+        self._password_visible = {}
         self._show_all_passwords = False
+
+        # Для подсветки поиска
+        self._search_text = ""
 
     def _get_password_display(self, password: str, visible: bool) -> str:
         if visible:
@@ -56,6 +61,29 @@ class SecureTable(QTreeWidget):
             item.setText(2, self._get_password_display(self._passwords[i], show))
 
         self.toggle_password_visibility.emit(show)
+
+
+    def set_search_highlight(self, search_text: str):
+        self._search_text = search_text.lower() if search_text else ""
+
+        for i, item in enumerate(self._items):
+            title = item.text(0)
+            username = item.text(1)
+            url = item.text(3)
+
+            if self._search_text and (
+                    self._search_text in title.lower() or
+                    self._search_text in username.lower() or
+                    self._search_text in url.lower()
+            ):
+                brush = QBrush(QColor(255, 255, 200))
+                item.setBackground(0, brush)
+                item.setBackground(1, brush)
+                item.setBackground(3, brush)
+            else:
+                item.setBackground(0, QBrush())
+                item.setBackground(1, QBrush())
+                item.setBackground(3, QBrush())
 
     def add_entry(self, entry_id: str, title: str, username: str,
                   password: str, url: str, updated_at: str = ""):
@@ -77,6 +105,9 @@ class SecureTable(QTreeWidget):
         self._passwords.append(password)
 
         self.addTopLevelItem(item)
+
+        if self._search_text:
+            self.set_search_highlight(self._search_text)
 
     def update_entry(self, entry_id: str, title: str, username: str,
                      password: str, url: str, updated_at: str = ""):
@@ -102,16 +133,45 @@ class SecureTable(QTreeWidget):
                 item.setText(4, updated_at)
                 break
 
+        if self._search_text:
+            self.set_search_highlight(self._search_text)
+
     def remove_entry(self, entry_id: str):
-        for i, eid in enumerate(self._item_ids):
-            if eid == entry_id:
+        for i in range(len(self._item_ids) - 1, -1, -1):
+            if self._item_ids[i] == entry_id:
                 item = self._items[i]
                 self.takeTopLevelItem(self.indexOfTopLevelItem(item))
+
                 del self._items[i]
                 del self._item_ids[i]
                 del self._passwords[i]
                 self._password_visible.pop(entry_id, None)
-                break
+                return
+
+        print(f"Warning: Entry {entry_id} not found for removal")
+
+    def remove_entries(self, entry_ids: list[str]):
+        if not entry_ids:
+            return
+
+        indices = []
+        for eid in entry_ids:
+            for i, existing_id in enumerate(self._item_ids):
+                if existing_id == eid:
+                    indices.append(i)
+                    break
+
+        indices.sort(reverse=True)
+
+        for idx in indices:
+            item = self._items[idx]
+            self.takeTopLevelItem(self.indexOfTopLevelItem(item))
+
+            eid = self._item_ids[idx]
+            del self._items[idx]
+            del self._item_ids[idx]
+            del self._passwords[idx]
+            self._password_visible.pop(eid, None)
 
     def get_selected_entries(self) -> list:
         selected_items = self.selectedItems()
@@ -135,6 +195,7 @@ class SecureTable(QTreeWidget):
         self._passwords.clear()
         self._password_visible.clear()
         self.clear()
+        self._search_text = ""
 
     def _on_selection_changed(self):
         selected = self.selectedItems()
@@ -256,5 +317,4 @@ class SecureTable(QTreeWidget):
         elif action == edit_action:
             self.item_double_clicked.emit({'id': entry_id})
         elif action == delete_action:
-            if self.parent():
-                self.parent().delete_selected()
+            self.item_delete_requested.emit({'id': entry_id})

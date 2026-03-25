@@ -3,8 +3,8 @@ import os
 from datetime import datetime
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QMessageBox, QFileDialog,
-                             QMenuBar, QMenu, QStatusBar, QLabel, QDialog,
-                             QLineEdit, QDialogButtonBox, QFormLayout, QToolBar)
+                             QStatusBar, QLabel, QDialog,
+                             QLineEdit, QToolBar)
 from PyQt6.QtCore import Qt, QTimer, QEvent
 from PyQt6.QtGui import QAction, QKeySequence
 
@@ -19,12 +19,12 @@ from src.gui.widgets.audit_log_viewer import AuditLogViewer
 from src.gui.widgets.settings_dialog import SettingsDialog
 from src.gui.widgets.setup_window import SetupWindow
 from src.gui.widgets.change_password_dialog import ChangePasswordDialog
+from src.gui.widgets.filter_dialog import FilterDialog
 from src.core.crypto.authentication import AuthenticationService
 from src.core.crypto.key_manager import KeyManager
 from src.core.crypto.abstract import VaultEncryptionService
 from src.core.state_manager import StateManager
 
-# НОВЫЕ ИМПОРТЫ ДЛЯ СПРИНТА 3
 from src.core.vault.entry_manager import EntryManager
 from src.gui.widgets.entry_dialog import EntryDialog
 
@@ -90,6 +90,7 @@ class CryptoSafeApp(QMainWindow):
         super().__init__()
         self.state = state
         self.auth = auth
+        self.current_filters = {}
 
         self.setWindowTitle("CryptoSafe Manager")
         self.setGeometry(100, 100, 960, 620)
@@ -230,7 +231,32 @@ class CryptoSafeApp(QMainWindow):
 
         toolbar.addSeparator()
 
-        # НОВОЕ: глобальный переключатель показа паролей (GUI-3)
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Поиск... (title:работа, username:ivan)")
+        self.search_input.setMinimumWidth(250)
+        self.search_input.textChanged.connect(self.on_search_text_changed)
+        toolbar.addWidget(self.search_input)
+
+        clear_search_btn = QPushButton("✖")
+        clear_search_btn.setFixedSize(25, 25)
+        clear_search_btn.setToolTip("Очистить поиск")
+        clear_search_btn.clicked.connect(self.clear_search)
+        toolbar.addWidget(clear_search_btn)
+
+        toolbar.addSeparator()
+
+        filter_btn = QPushButton("🔍 Фильтры")
+        filter_btn.setToolTip("Открыть диалог фильтров")
+        filter_btn.clicked.connect(self.open_filter_dialog)
+        toolbar.addWidget(filter_btn)
+
+        clear_filter_btn = QPushButton("✖ Фильтры")
+        clear_filter_btn.setToolTip("Очистить все фильтры")
+        clear_filter_btn.clicked.connect(self.clear_filters)
+        toolbar.addWidget(clear_filter_btn)
+
+        toolbar.addSeparator()
+
         self.show_password_action = QAction("Показать пароли", self)
         self.show_password_action.setCheckable(True)
         self.show_password_action.setChecked(False)
@@ -251,12 +277,11 @@ class CryptoSafeApp(QMainWindow):
         layout = QVBoxLayout(central_widget)
         layout.setContentsMargins(10, 10, 10, 10)
 
-        # НОВОЕ: используем обновленный SecureTable с колонкой пароля
         self.table = SecureTable()
         layout.addWidget(self.table)
 
-        # НОВОЕ: подключаем сигналы таблицы
         self.table.item_double_clicked.connect(self.on_entry_double_clicked)
+        self.table.item_delete_requested.connect(self.on_delete_requested)
 
     def create_status_bar(self):
         self.status_bar = QStatusBar()
@@ -270,10 +295,10 @@ class CryptoSafeApp(QMainWindow):
         else:
             self.status_bar.showMessage("Готово | Сессия активна")
 
-    # НОВЫЙ МЕТОД: загрузка записей из БД
     def load_entries(self):
-        """Загружает все записи из БД в таблицу"""
         self.table.clear_all()
+        self.search_input.clear()
+        self.current_filters = {}
 
         try:
             entries = self.entry_manager.get_all_entries()
@@ -291,6 +316,91 @@ class CryptoSafeApp(QMainWindow):
             print(f"Ошибка загрузки записей: {e}")
             self.status_bar.showMessage("Ошибка загрузки записей")
 
+    def on_search_text_changed(self, text: str):
+        if not text.strip():
+            if self.current_filters:
+                self.apply_filters()
+            else:
+                self.load_entries()
+        else:
+            self.search_entries(text)
+
+    def search_entries(self, query: str):
+        try:
+            if self.current_filters:
+                all_entries = self.entry_manager.get_filtered_entries(self.current_filters)
+            else:
+                all_entries = self.entry_manager.get_all_entries()
+
+            results = []
+            for entry in all_entries:
+                if self._entry_matches_search(entry, query):
+                    results.append(entry)
+
+            self._display_entries(results)
+            self.table.set_search_highlight(query)
+            self.status_bar.showMessage(f"Найдено {len(results)} записей")
+
+        except Exception as e:
+            print(f"Ошибка поиска: {e}")
+            self.status_bar.showMessage("Ошибка поиска")
+
+    def _entry_matches_search(self, entry: dict, query: str) -> bool:
+        query = query.lower()
+        return (
+                query in entry.get('title', '').lower() or
+                query in entry.get('username', '').lower() or
+                query in entry.get('url', '').lower() or
+                query in entry.get('notes', '').lower()
+        )
+
+    def clear_search(self):
+        self.search_input.clear()
+        if self.current_filters:
+            self.apply_filters()
+        else:
+            self.load_entries()
+
+    def open_filter_dialog(self):
+        dialog = FilterDialog(self, self.entry_manager)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.current_filters = dialog.get_filters()
+            self.apply_filters()
+
+    def apply_filters(self):
+        try:
+            if self.current_filters:
+                entries = self.entry_manager.get_filtered_entries(self.current_filters)
+                self._display_entries(entries)
+
+                filter_count = len(self.current_filters)
+                self.status_bar.showMessage(f"Фильтры активны ({filter_count}) | Найдено {len(entries)} записей")
+            else:
+                self.load_entries()
+                self.status_bar.showMessage("Фильтры отключены")
+
+        except Exception as e:
+            print(f"Ошибка применения фильтров: {e}")
+            self.status_bar.showMessage("Ошибка применения фильтров")
+
+    def clear_filters(self):
+        self.current_filters = {}
+        self.load_entries()
+        self.status_bar.showMessage("Фильтры очищены")
+
+    def _display_entries(self, entries):
+        self.table.clear_all()
+        for entry in entries:
+            self.table.add_entry(
+                entry_id=entry.get('id', ''),
+                title=entry.get('title', ''),
+                username=entry.get('username', ''),
+                password=entry.get('password', ''),
+                url=entry.get('url', ''),
+                updated_at=entry.get('updated_at', '')[:10]
+            )
+
     def toggle_show_passwords(self):
         show = self.show_password_action.isChecked()
         self.table.set_show_all_passwords(show)
@@ -305,6 +415,33 @@ class CryptoSafeApp(QMainWindow):
         entry_id = data.get('id')
         if entry_id:
             self.edit_entry(entry_id)
+
+    def on_delete_requested(self, data):
+        entry_id = data.get('id')
+        if not entry_id:
+            return
+        self.delete_single_entry(entry_id)
+
+    def delete_single_entry(self, entry_id: str):
+        if not self.state.is_active():
+            QMessageBox.critical(self, "Ошибка", "Сессия не активна.")
+            return
+
+        reply = QMessageBox.question(
+            self,
+            "Подтверждение",
+            "Удалить эту запись?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                self.entry_manager.delete_entry(entry_id, soft_delete=True)
+                self.table.remove_entry(entry_id)
+                self.status_bar.showMessage("Запись удалена")
+                self.state.update_activity()
+            except Exception as e:
+                QMessageBox.critical(self, "Ошибка", f"Ошибка при удалении: {e}")
 
     def edit_entry(self, entry_id: str):
         if not self.state.is_active():
@@ -370,30 +507,40 @@ class CryptoSafeApp(QMainWindow):
     def delete_selected(self):
         selected_ids = self.table.get_selected_entries()
         if not selected_ids:
-            QMessageBox.information(self, "Информация", "Выберите запись для удаления")
+            QMessageBox.information(self, "Информация", "Выберите записи для удаления")
             return
 
         if not self.state.is_active():
             QMessageBox.critical(self, "Ошибка", "Сессия не активна.")
             return
 
+        count = len(selected_ids)
         reply = QMessageBox.question(
             self,
-            "Подтверждение",
-            f"Удалить выбранные записи ({len(selected_ids)})?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            "Подтверждение удаления",
+            f"Удалить выбранные записи ({count} шт.)?\n\nЭто действие нельзя отменить.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
         )
 
-        if reply == QMessageBox.StandardButton.Yes:
-            for entry_id in selected_ids:
-                try:
-                    self.entry_manager.delete_entry(entry_id, soft_delete=True)
-                    self.table.remove_entry(entry_id)
-                except Exception as e:
-                    print(f"Ошибка удаления {entry_id}: {e}")
+        if reply != QMessageBox.StandardButton.Yes:
+            return
 
-            self.status_bar.showMessage(f"Удалено {len(selected_ids)} записей")
+        ids_to_delete = list(selected_ids)
+
+        deleted_count = 0
+        try:
+            for entry_id in ids_to_delete:
+                self.entry_manager.delete_entry(entry_id, soft_delete=True)
+                deleted_count += 1
+
+            self.table.remove_entries(ids_to_delete)
+
+            self.status_bar.showMessage(f"Успешно удалено {deleted_count} записей")
             self.state.update_activity()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Произошла ошибка при удалении: {e}")
 
     def open_add_dialog(self):
         if not self.state.is_active():

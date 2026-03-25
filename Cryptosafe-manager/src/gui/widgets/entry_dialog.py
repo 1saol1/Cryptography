@@ -3,6 +3,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLineEdit,
                              QMessageBox, QComboBox)
 
 from .password_entry import PasswordEntry
+from .password_generator_dialog import PasswordGeneratorDialog
 
 
 class EntryDialog(QDialog):
@@ -42,9 +43,23 @@ class EntryDialog(QDialog):
         self.strength_label.setStyleSheet("font-size: 10px;")
         form_layout.addRow("", self.strength_label)
 
-        gen_btn = QPushButton("Сгенерировать пароль")
-        gen_btn.clicked.connect(self._generate_password)
-        form_layout.addRow("", gen_btn)
+        # Горизонтальный layout для кнопок генерации
+        gen_layout = QHBoxLayout()
+
+        # Кнопка "Сгенерировать пароль"
+        self.gen_btn = QPushButton("Сгенерировать пароль")
+        self.gen_btn.clicked.connect(self._generate_password_simple)
+        gen_layout.addWidget(self.gen_btn)
+
+        # Кнопка настроек (шестеренка)
+        self.settings_btn = QPushButton("⚙️")
+        self.settings_btn.setFixedSize(30, 30)
+        self.settings_btn.setToolTip("Настройки генерации пароля")
+        self.settings_btn.clicked.connect(self._open_generator_dialog)
+        gen_layout.addWidget(self.settings_btn)
+
+        gen_layout.addStretch()
+        form_layout.addRow("", gen_layout)
 
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText("https://example.com")
@@ -93,10 +108,18 @@ class EntryDialog(QDialog):
 
         self._check_password_strength()
 
-    def _generate_password(self):
+    def _generate_password_simple(self):
         password = self.entry_manager.generate_password()
         self.password_input.entry.setText(password)
         self._check_password_strength()
+
+    def _open_generator_dialog(self):
+        dialog = PasswordGeneratorDialog(self, self.entry_manager)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            password = dialog.get_password()
+            if password:
+                self.password_input.entry.setText(password)
+                self._check_password_strength()
 
     def _check_password_strength(self):
         try:
@@ -108,7 +131,6 @@ class EntryDialog(QDialog):
 
             strength = self.entry_manager.check_password_strength(password)
 
-            # Проверяем, что strength - это словарь с нужными ключами
             if isinstance(strength, dict) and 'score' in strength and 'strength' in strength and 'feedback' in strength:
                 if strength['score'] >= 3:
                     color = "green"
@@ -122,10 +144,10 @@ class EntryDialog(QDialog):
             else:
                 if len(password) >= 12:
                     color = "green"
-                    text = f"Длина: {len(password)} символов"
+                    text = f"Длина: {len(password)} символов (хорошо)"
                 elif len(password) >= 8:
                     color = "orange"
-                    text = f"Длина: {len(password)} символов"
+                    text = f"Длина: {len(password)} символов (минимум 12 для надежного)"
                 else:
                     color = "red"
                     text = f"Длина: {len(password)} символов (минимум 8)"
@@ -141,6 +163,23 @@ class EntryDialog(QDialog):
             else:
                 self.strength_label.setText("")
 
+    def _validate_url(self, url: str) -> bool:
+        if not url:
+            return True
+
+        if not url.startswith(('http://', 'https://')):
+            reply = QMessageBox.question(
+                self,
+                "Нестандартный URL",
+                f"URL должен начинаться с http:// или https://\n\n"
+                f"Текущий URL: {url}\n\n"
+                "Продолжить с этим URL?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            return reply == QMessageBox.StandardButton.Yes
+
+        return True
+
     def _validate(self) -> bool:
         title = self.title_input.text().strip()
         if not title:
@@ -154,17 +193,23 @@ class EntryDialog(QDialog):
             self.password_input.entry.setFocus()
             return False
 
+        url = self.url_input.text().strip()
+        if not self._validate_url(url):
+            self.url_input.setFocus()
+            return False
+
         strength = self.entry_manager.check_password_strength(password)
-        if not strength['is_strong']:
+        if not strength.get('is_strong', False):
             reply = QMessageBox.question(
-                 self,
-                 "Слабый пароль",
-                 f"Пароль: {strength['strength']}\n{strength['feedback']}\n\n"
-                 "Вы уверены, что хотите использовать этот пароль?",
-                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-             )
+                self,
+                "Слабый пароль",
+                f"Пароль: {strength.get('strength', 'Слабый')}\n"
+                f"{strength.get('feedback', '')}\n\n"
+                "Вы уверены, что хотите использовать этот пароль?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
             if reply != QMessageBox.StandardButton.Yes:
-                 return False
+                return False
 
         return True
 

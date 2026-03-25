@@ -1,10 +1,19 @@
 import uuid
 import json
+import re
 from datetime import datetime
 from typing import List, Dict, Any
 
 from .encryption_service import EncryptionService
 from .password_generator import PasswordGenerator
+
+try:
+    from fuzzywuzzy import fuzz
+
+    FUZZY_AVAILABLE = True
+except ImportError:
+    FUZZY_AVAILABLE = False
+    print("Для нечеткого поиска установите: pip install fuzzywuzzy python-Levenshtein")
 
 
 class EntryManager:
@@ -14,7 +23,6 @@ class EntryManager:
         self.auth_service = auth_service
         self.event_system = event_system
 
-        # Передаем key_manager в EncryptionService
         self.encryption = EncryptionService(key_manager)
 
         self.generator = PasswordGenerator()
@@ -191,26 +199,122 @@ class EntryManager:
                 self.db.rollback()
             raise
 
+
     def search_entries(self, query: str) -> List[Dict[str, Any]]:
+        if not query or not query.strip():
+            return self.get_all_entries()
+
+        query = query.strip()
+
+        filters = self._parse_search_query(query)
+
         all_entries = self.get_all_entries()
 
-        if not query:
-            return all_entries
-
-        query = query.lower()
         results = []
-
         for entry in all_entries:
-            if (query in entry.get('title', '').lower() or
-                    query in entry.get('username', '').lower() or
-                    query in entry.get('url', '').lower() or
-                    query in entry.get('notes', '').lower()):
+            if self._matches_filters(entry, filters):
                 results.append(entry)
 
         return results
 
+    def _parse_search_query(self, query: str) -> dict:
+        result = {
+            'global': '',
+            'title': '',
+            'username': '',
+            'url': '',
+            'notes': ''
+        }
+
+        pattern = r'(\w+):"([^"]*)"|(\w+):(\S+)|([^"\s]+)'
+
+        matches = re.findall(pattern, query)
+
+        for match in matches:
+            if match[0] and match[1]:
+                field, value = match[0], match[1].lower()
+                if field in result:
+                    result[field] = value
+            elif match[2] and match[3]:
+                field, value = match[2], match[3].lower()
+                if field in result:
+                    result[field] = value
+            elif match[4]:
+                word = match[4].lower()
+                if result['global']:
+                    result['global'] += ' ' + word
+                else:
+                    result['global'] = word
+
+        result['global'] = result['global'].strip()
+
+        return result
+
+    def _fuzzy_match(self, text: str, search: str, threshold: int = 80) -> bool:
+        if not search:
+            return True
+        if not text:
+            return False
+
+        text = text.lower()
+        search = search.lower()
+
+        if search in text:
+            return True
+
+        if FUZZY_AVAILABLE:
+            ratio = fuzz.partial_ratio(text, search)
+            return ratio >= threshold
+
+        return False
+
+    def _matches_filters(self, entry: dict, filters: dict) -> bool:
+        if filters['title']:
+            title = entry.get('title', '')
+            if not self._fuzzy_match(title, filters['title']):
+                return False
+
+        if filters['username']:
+            username = entry.get('username', '')
+            if not self._fuzzy_match(username, filters['username']):
+                return False
+
+        if filters['url']:
+            url = entry.get('url', '')
+            if not self._fuzzy_match(url, filters['url']):
+                return False
+
+        if filters['notes']:
+            notes = entry.get('notes', '')
+            if not self._fuzzy_match(notes, filters['notes']):
+                return False
+
+        if filters['global']:
+            all_text = ' '.join([
+                entry.get('title', ''),
+                entry.get('username', ''),
+                entry.get('url', ''),
+                entry.get('notes', '')
+            ])
+
+            if not self._fuzzy_match(all_text, filters['global']):
+                return False
+
+        return True
+
     def generate_password(self) -> str:
         return self.generator.generate()
+
+    def generate_with_settings(self, length=16, use_uppercase=True, use_lowercase=True,
+                               use_digits=True, use_special=True, exclude_ambiguous=True) -> str:
+        return self.generator.generate(
+            length=length,
+            use_uppercase=use_uppercase,
+            use_lowercase=use_lowercase,
+            use_digits=use_digits,
+            use_special=use_special,
+            exclude_ambiguous=exclude_ambiguous
+        )
 
     def generate_pin(self, length: int = 6) -> str:
         return self.generator.generate_pin(length)
