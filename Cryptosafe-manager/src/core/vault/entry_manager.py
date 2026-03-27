@@ -87,7 +87,7 @@ class EntryManager:
             return entry_id
 
         except Exception as e:
-            print(f"Ошибка при создании записи: {e}")
+            print(f"Ошибка создания записи")
             if hasattr(self.db, 'rollback'):
                 self.db.rollback()
             raise
@@ -239,10 +239,10 @@ class EntryManager:
                         (datetime.now(), entry_id)
                     )
 
-                    print(f"Запись перемещена в корзину: {entry_id}")
+                    print(f"Запись перемещена в корзину")
             else:
                 self.db.execute("DELETE FROM vault_entries WHERE id = ?", (entry_id,))
-                print(f"Запись полностью удалена: {entry_id}")
+                print(f"Запись полностью удалена")
 
             if hasattr(self.db, 'commit'):
                 self.db.commit()
@@ -264,7 +264,6 @@ class EntryManager:
 
         query = query.strip().lower()
 
-        # Быстрый поиск без сложных фильтров
         all_entries = self.get_all_entries()
         results = []
 
@@ -385,7 +384,6 @@ class EntryManager:
             if not found:
                 return False
 
-        # Фильтр по дате
         if 'date' in filters:
             date_filters = filters['date']
             updated_at = entry.get('updated_at', '')
