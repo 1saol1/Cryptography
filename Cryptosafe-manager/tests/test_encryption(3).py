@@ -1,12 +1,23 @@
+import sys
 import os
+
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, BASE_DIR)
+
 import pytest
 from src.core.vault.encryption_service import EncryptionService
 from src.core.crypto.key_manager import KeyManager
 
 
 class MockKeyManager:
+    def __init__(self):
+        self._key = os.urandom(32)
+
     def get_cached_key(self):
-        return os.urandom(32)
+        return self._key
+
+    def update_activity(self):
+        pass
 
 
 def test_encryption_cycle():
@@ -35,9 +46,10 @@ def test_encryption_cycle():
     decrypted_data = encryption_service.decrypt(encrypted_blob)
 
     assert decrypted_data == original_data
+    assert decrypted_data['title'] == 'Тестовая запись'
+    assert decrypted_data['password'] == 'secret123'
 
     print("Цикл шифрования/расшифрования работает")
-
 
 if __name__ == "__main__":
     test_encryption_cycle()

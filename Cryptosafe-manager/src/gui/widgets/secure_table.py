@@ -43,7 +43,6 @@ class SecureTable(QTreeWidget):
         self._password_visible = {}
         self._show_all_passwords = False
 
-        # Для подсветки поиска
         self._search_text = ""
 
     def _get_password_display(self, password: str, visible: bool) -> str:
@@ -61,7 +60,6 @@ class SecureTable(QTreeWidget):
             item.setText(2, self._get_password_display(self._passwords[i], show))
 
         self.toggle_password_visibility.emit(show)
-
 
     def set_search_highlight(self, search_text: str):
         self._search_text = search_text.lower() if search_text else ""
@@ -306,14 +304,18 @@ class SecureTable(QTreeWidget):
         entry_id = self._item_ids[idx]
 
         if action == copy_title:
-            QApplication.clipboard().setText(item.text(0))
+            if hasattr(self.parent(), 'clipboard_manager'):
+                self.parent().clipboard_manager.copy_to_clipboard(item.text(0))
         elif action == copy_username:
-            QApplication.clipboard().setText(item.text(1))
+            if hasattr(self.parent(), 'clipboard_manager'):
+                self.parent().clipboard_manager.copy_to_clipboard(item.text(1))
         elif action == copy_password:
             password = self._passwords[idx]
-            QApplication.clipboard().setText(password)
+            if hasattr(self.parent(), 'clipboard_manager'):
+                self.parent().clipboard_manager.copy_to_clipboard(password)
         elif action == copy_url:
-            QApplication.clipboard().setText(item.text(3))
+            if hasattr(self.parent(), 'clipboard_manager'):
+                self.parent().clipboard_manager.copy_to_clipboard(item.text(3))
         elif action == edit_action:
             self.item_double_clicked.emit({'id': entry_id})
         elif action == delete_action:

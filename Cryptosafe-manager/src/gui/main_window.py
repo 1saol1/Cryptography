@@ -24,6 +24,8 @@ from src.core.crypto.authentication import AuthenticationService
 from src.core.crypto.key_manager import KeyManager
 from src.core.crypto.abstract import VaultEncryptionService
 from src.core.state_manager import StateManager
+from src.core.clipboard_manager import ClipboardManager
+
 
 from src.core.vault.entry_manager import EntryManager
 from src.gui.widgets.entry_dialog import EntryDialog
@@ -91,6 +93,7 @@ class CryptoSafeApp(QMainWindow):
         self.state = state
         self.auth = auth
         self.current_filters = {}
+        self._saved_entry_ids = []
 
         self.setWindowTitle("CryptoSafe Manager")
         self.setGeometry(100, 100, 960, 620)
@@ -137,13 +140,53 @@ class CryptoSafeApp(QMainWindow):
         self.timer.timeout.connect(self.check_session_timeout)
         self.timer.start(60000)
 
+        self.clipboard_manager = ClipboardManager()
+        self.clipboard_manager.clipboard_copied.connect(self.on_clipboard_copied)
+        self.clipboard_manager.clipboard_cleared.connect(self.on_clipboard_cleared)
+
     def changeEvent(self, event):
         if event.type() == QEvent.Type.WindowStateChange:
             if self.windowState() & Qt.WindowState.WindowMinimized:
-                print("Окно свернуто - очищаем ключи")
+                print("Окно свернуто - очищаем ключи и данные")
                 self.key_manager.on_app_minimize()
+                self._clear_decrypted_data()
                 self.status_bar.showMessage("Приложение свернуто - данные защищены")
+            else:
+                print("Окно развернуто - восстанавливаем данные")
+                self._restore_decrypted_data()
         super().changeEvent(event)
+
+    def _clear_decrypted_data(self):
+        self._saved_entry_ids = []
+        for i in range(self.table.topLevelItemCount()):
+            item = self.table.topLevelItem(i)
+            for idx, it in enumerate(self.table._items):
+                if it is item:
+                    self._saved_entry_ids.append(self.table._item_ids[idx])
+                    break
+
+        self.table.clear_all()
+        self.status_bar.showMessage("Данные защищены - окно свернуто")
+
+    def _restore_decrypted_data(self):
+        if self._saved_entry_ids:
+            try:
+                entries = []
+                for entry_id in self._saved_entry_ids:
+                    try:
+                        entry = self.entry_manager.get_entry(entry_id)
+                        entries.append(entry)
+                    except Exception as e:
+                        print(f"Ошибка загрузки {entry_id}: {e}")
+
+                self._display_entries(entries)
+                self.status_bar.showMessage(f"Восстановлено {len(entries)} записей")
+                self._saved_entry_ids = []
+            except Exception as e:
+                print(f"Ошибка восстановления: {e}")
+                self.load_entries()
+        else:
+            self.load_entries()
 
     def center_window(self):
         screen = QApplication.primaryScreen().geometry()
@@ -328,31 +371,16 @@ class CryptoSafeApp(QMainWindow):
     def search_entries(self, query: str):
         try:
             if self.current_filters:
-                all_entries = self.entry_manager.get_filtered_entries(self.current_filters)
+                entries = self.entry_manager.get_filtered_entries(self.current_filters)
             else:
-                all_entries = self.entry_manager.get_all_entries()
+                entries = self.entry_manager.search_entries(query)
 
-            results = []
-            for entry in all_entries:
-                if self._entry_matches_search(entry, query):
-                    results.append(entry)
-
-            self._display_entries(results)
-            self.table.set_search_highlight(query)
-            self.status_bar.showMessage(f"Найдено {len(results)} записей")
+            self._display_entries(entries)
+            self.status_bar.showMessage(f"Найдено {len(entries)} записей")
 
         except Exception as e:
             print(f"Ошибка поиска: {e}")
             self.status_bar.showMessage("Ошибка поиска")
-
-    def _entry_matches_search(self, entry: dict, query: str) -> bool:
-        query = query.lower()
-        return (
-            query in entry.get('title', '').lower() or
-            query in entry.get('username', '').lower() or
-            query in entry.get('url', '').lower() or
-            query in entry.get('notes', '').lower()
-        )
 
     def clear_search(self):
         self.search_input.clear()
@@ -441,7 +469,7 @@ class CryptoSafeApp(QMainWindow):
                 self.status_bar.showMessage("Запись удалена")
                 self.state.update_activity()
             except Exception as e:
-                QMessageBox.critical(self, "Ошибка", f"Ошибка при удалении: {e}")
+                QMessageBox.critical(self, "Ошибка", f"Не удалось удалить запись")
 
     def edit_entry(self, entry_id: str):
         if not self.state.is_active():
@@ -471,7 +499,7 @@ class CryptoSafeApp(QMainWindow):
                 self.state.update_activity()
 
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Ошибка при редактировании: {e}")
+            QMessageBox.critical(self, "Ошибка", f"Ошибка при редактировании")
 
     def new_database(self):
         QMessageBox.information(self, "Создать",
@@ -540,7 +568,7 @@ class CryptoSafeApp(QMainWindow):
             self.state.update_activity()
 
         except Exception as e:
-            QMessageBox.critical(self, "Ошибка", f"Произошла ошибка при удалении: {e}")
+            QMessageBox.critical(self, "Ошибка", f"Не удалось удалить выбранные записи")
 
     def open_add_dialog(self):
         if not self.state.is_active():
@@ -607,6 +635,12 @@ class CryptoSafeApp(QMainWindow):
     def on_entry_added(self, data):
         self.status_bar.showMessage(f"Добавлена запись: {data.get('title', 'без названия')}")
         self.state.update_activity()
+
+    def on_clipboard_copied(self, preview: str):
+        self.status_bar.showMessage(f"Скопировано в буфер обмена: {preview}... (будет очищен через 30 сек)")
+
+    def on_clipboard_cleared(self):
+        self.status_bar.showMessage("Буфер обмена очищен")
 
 
 def main():

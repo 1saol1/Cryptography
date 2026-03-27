@@ -49,7 +49,10 @@ class EntryManager:
             'id': entry_id,
             'created_at': datetime.now().isoformat(),
             'updated_at': datetime.now().isoformat(),
-            'version': 1
+            'version': 1,
+
+            'totp_secret': data.get('totp_secret', ''),
+            'share_metadata': data.get('share_metadata', '')
         }
 
         encrypted_blob = self.encryption.encrypt(full_data)
@@ -60,10 +63,16 @@ class EntryManager:
         else:
             tags_json = '[]'
 
+        totp_secret = data.get('totp_secret', '')
+        share_metadata = data.get('share_metadata', '')
+
         try:
             self.db.execute(
-                "INSERT INTO vault_entries (id, encrypted_data, created_at, updated_at, tags) VALUES (?, ?, ?, ?, ?)",
-                (entry_id, encrypted_blob, datetime.now(), datetime.now(), tags_json)
+                """INSERT INTO vault_entries 
+                   (id, encrypted_data, created_at, updated_at, tags, totp_secret, share_metadata) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (entry_id, encrypted_blob, datetime.now(), datetime.now(),
+                 tags_json, totp_secret, share_metadata)
             )
 
             if hasattr(self.db, 'commit'):
@@ -78,7 +87,7 @@ class EntryManager:
             return entry_id
 
         except Exception as e:
-            print(f" Ошибка при создании записи: {e}")
+            print(f"Ошибка при создании записи: {e}")
             if hasattr(self.db, 'rollback'):
                 self.db.rollback()
             raise
@@ -87,7 +96,9 @@ class EntryManager:
         self._update_activity()
 
         cursor = self.db.execute(
-            "SELECT encrypted_data, tags FROM vault_entries WHERE id = ? AND deleted_at IS NULL",
+            """SELECT encrypted_data, tags, totp_secret, share_metadata 
+               FROM vault_entries 
+               WHERE id = ? AND deleted_at IS NULL""",
             (entry_id,)
         )
         row = cursor.fetchone()
@@ -107,23 +118,42 @@ class EntryManager:
         else:
             data['tags'] = []
 
+        data['totp_secret'] = row[2] or ''
+        data['share_metadata'] = row[3] or ''
+
         return data
 
     def get_all_entries(self) -> List[Dict[str, Any]]:
         self._update_activity()
 
         cursor = self.db.execute(
-            "SELECT id, tags FROM vault_entries WHERE deleted_at IS NULL ORDER BY updated_at DESC"
+            """SELECT id, encrypted_data, tags, totp_secret, share_metadata 
+               FROM vault_entries 
+               WHERE deleted_at IS NULL 
+               ORDER BY updated_at DESC"""
         )
         rows = cursor.fetchall()
 
         entries = []
         for row in rows:
             try:
-                entry = self.get_entry(row[0])
-                entries.append(entry)
+                entry_id, encrypted_blob, tags_json, totp_secret, share_metadata = row
+                data = self.encryption.decrypt(encrypted_blob)
+
+                if tags_json and tags_json != '[]':
+                    try:
+                        data['tags'] = json.loads(tags_json)
+                    except:
+                        data['tags'] = []
+                else:
+                    data['tags'] = []
+
+                data['totp_secret'] = totp_secret or ''
+                data['share_metadata'] = share_metadata or ''
+
+                entries.append(data)
             except Exception as e:
-                print(f"Ошибка при загрузке записи {row[0]}: {e}")
+                print(f"Ошибка при загрузке записи {row[0] if row else 'unknown'}: {e}")
 
         return entries
 
@@ -141,10 +171,25 @@ class EntryManager:
 
         encrypted_blob = self.encryption.encrypt(updated_data)
 
+        totp_secret = updated_data.get('totp_secret', '')
+        share_metadata = updated_data.get('share_metadata', '')
+
+        tags = updated_data.get('tags', [])
+        if isinstance(tags, list):
+            tags_json = json.dumps(tags)
+        else:
+            tags_json = '[]'
+
         try:
             self.db.execute(
-                "UPDATE vault_entries SET encrypted_data = ?, updated_at = ? WHERE id = ?",
-                (encrypted_blob, datetime.now(), entry_id)
+                """UPDATE vault_entries 
+                   SET encrypted_data = ?, 
+                       updated_at = ?, 
+                       tags = ?, 
+                       totp_secret = ?, 
+                       share_metadata = ? 
+                   WHERE id = ?""",
+                (encrypted_blob, datetime.now(), tags_json, totp_secret, share_metadata, entry_id)
             )
 
             if hasattr(self.db, 'commit'):
@@ -158,6 +203,11 @@ class EntryManager:
 
             print(f"Запись обновлена: {entry_id}")
             return updated_data
+
+        except Exception as e:
+            if hasattr(self.db, 'rollback'):
+                self.db.rollback()
+            raise
 
         except Exception as e:
             if hasattr(self.db, 'rollback'):
@@ -208,23 +258,42 @@ class EntryManager:
                 self.db.rollback()
             raise
 
-
     def search_entries(self, query: str) -> List[Dict[str, Any]]:
         if not query or not query.strip():
             return self.get_all_entries()
 
-        query = query.strip()
+        query = query.strip().lower()
 
-        filters = self._parse_search_query(query)
-
+        # Быстрый поиск без сложных фильтров
         all_entries = self.get_all_entries()
-
         results = []
+
         for entry in all_entries:
-            if self._matches_filters(entry, filters):
+            if self._quick_search_match(entry, query):
                 results.append(entry)
 
         return results
+
+    def _quick_search_match(self, entry: dict, query: str) -> bool:
+        q = query.lower()
+
+        if (q in str(entry.get('title', '')).lower() or
+                q in str(entry.get('username', '')).lower() or
+                q in str(entry.get('url', '')).lower() or
+                q in str(entry.get('notes', '')).lower() or
+                q in str(entry.get('category', '')).lower()):
+            return True
+
+        if q in str(entry.get('password', '')).lower():
+            return True
+
+        tags = entry.get('tags', [])
+        if isinstance(tags, list):
+            for tag in tags:
+                if q in str(tag).lower():
+                    return True
+
+        return False
 
     def _parse_search_query(self, query: str) -> dict:
         result = {

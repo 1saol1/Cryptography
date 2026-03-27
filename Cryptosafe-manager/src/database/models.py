@@ -1,5 +1,4 @@
 import logging
-from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +26,9 @@ def create_tables(conn):
             created_at TIMESTAMP NOT NULL,
             updated_at TIMESTAMP NOT NULL,
             deleted_at TIMESTAMP,
-            tags TEXT DEFAULT '[]'
+            tags TEXT DEFAULT '[]',
+            totp_secret TEXT,
+            share_metadata TEXT
         )
     """)
 
@@ -50,6 +51,11 @@ def create_tables(conn):
         CREATE INDEX IF NOT EXISTS idx_vault_tags 
         ON vault_entries(tags)
     """)
+
+    cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_vault_totp 
+            ON vault_entries(totp_secret)
+        """)
 
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS audit_log (
