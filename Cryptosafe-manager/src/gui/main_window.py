@@ -11,7 +11,7 @@ from PyQt6.QtGui import QAction, QKeySequence
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, BASE_DIR)
 
-from src.core.events import EventBus, ENTRY_ADDED
+from src.core.events import EventBus, ENTRY_ADDED, CLIPBOARD_COPIED, CLIPBOARD_CLEARED
 from src.database.audit_logger import AuditLogger
 from src.database.db import Database
 from src.gui.widgets.secure_table import SecureTable
@@ -24,8 +24,11 @@ from src.core.crypto.authentication import AuthenticationService
 from src.core.crypto.key_manager import KeyManager
 from src.core.crypto.abstract import VaultEncryptionService
 from src.core.state_manager import StateManager
-from src.core.clipboard_manager import ClipboardManager
+from src.core.config import ConfigManager  # ДОБАВЛЕН ИМПОРТ
 
+from src.core.clipboard.clipboard_service import ClipboardService
+from src.core.clipboard.clipboard_monitor import ClipboardMonitor
+from src.core.clipboard.clipboard_config import ClipboardSettings
 
 from src.core.vault.entry_manager import EntryManager
 from src.gui.widgets.entry_dialog import EntryDialog
@@ -108,6 +111,9 @@ class CryptoSafeApp(QMainWindow):
         self.db = Database(db_path)
         self.db.initialize()
 
+        # ========== СОЗДАЕМ CONFIG MANAGER ==========
+        self.config_manager = ConfigManager(db_path)
+
         self.key_manager = KeyManager()
 
         encryption_key = self.state.get_key()
@@ -140,9 +146,71 @@ class CryptoSafeApp(QMainWindow):
         self.timer.timeout.connect(self.check_session_timeout)
         self.timer.start(60000)
 
-        self.clipboard_manager = ClipboardManager()
-        self.clipboard_manager.clipboard_copied.connect(self.on_clipboard_copied)
-        self.clipboard_manager.clipboard_cleared.connect(self.on_clipboard_cleared)
+        # ========== НАСТРОЙКИ БУФЕРА ОБМЕНА ==========
+        # Создаем настройки буфера
+        self.clipboard_settings = ClipboardSettings(self.config_manager)
+
+        # Добавляем настройки по умолчанию (если их нет)
+        self.clipboard_settings.add_default_settings()
+
+        # Создаем сервис буфера
+        self.clipboard_service = ClipboardService(
+            event_bus=self.event_bus,
+            state_manager=self.state,
+            config_manager=self.config_manager
+        )
+
+        # Создаем монитор буфера
+        self.clipboard_monitor = ClipboardMonitor(
+            clipboard_service=self.clipboard_service,
+            event_bus=self.event_bus,
+            config_manager=self.config_manager
+        )
+
+        # Загружаем настройки из БД
+        self._load_clipboard_settings()
+
+        # Подписываемся на события буфера обмена
+        self.event_bus.subscribe(CLIPBOARD_COPIED, self.on_clipboard_copied_event)
+        self.event_bus.subscribe(CLIPBOARD_CLEARED, self.on_clipboard_cleared_event)
+
+        # Запускаем мониторинг
+        self.clipboard_monitor.start_monitoring()
+
+        print("[APP] Сервис буфера обмена инициализирован")
+
+    def _load_clipboard_settings(self):
+        """Загружает настройки буфера обмена из базы данных"""
+        try:
+            timeout = self.clipboard_settings.timeout
+            self.clipboard_service.set_timeout(timeout)
+
+            security_level = self.clipboard_settings.security_level
+            self.clipboard_service.set_security_level(security_level)
+
+            print(f"[APP] Загружены настройки буфера: таймаут={timeout}с, уровень={security_level}")
+        except Exception as e:
+            print(f"[APP] Ошибка загрузки настроек буфера: {e}")
+
+    def copy_to_clipboard(self, text: str, data_type: str = "text", entry_id: str = None):
+        """Универсальный метод для копирования в буфер обмена"""
+        if not self.state.is_active():
+            QMessageBox.warning(self, "Доступ запрещен", "Хранилище заблокировано. Выполните вход.")
+            return False
+
+        if not text:
+            return False
+
+        success = self.clipboard_service.copy_to_clipboard(
+            data=text,
+            data_type=data_type,
+            source_entry_id=entry_id
+        )
+
+        if success:
+            self.state.update_activity()
+
+        return success
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.WindowStateChange:
@@ -203,6 +271,13 @@ class CryptoSafeApp(QMainWindow):
 
     def closeEvent(self, event):
         print("Завершение работы приложения")
+
+        # Останавливаем мониторинг и очищаем буфер
+        if hasattr(self, 'clipboard_monitor'):
+            self.clipboard_monitor.stop_monitoring()
+        if hasattr(self, 'clipboard_service'):
+            self.clipboard_service.shutdown()
+
         self.state.end_session()
         self.key_manager.clear_cache()
         self.db.close()
@@ -620,15 +695,13 @@ class CryptoSafeApp(QMainWindow):
             self,
             "О программе",
             "CryptoSafe Manager\n\n"
-            "Версия: 3.0 (Спринт 3)\n"
+            "Версия: 4.0 (Спринт 4)\n"
             "Локальный менеджер паролей с шифрованием\n\n"
-            "Реализовано в Спринте 3:\n"
-            "• CRUD операции с записями\n"
-            "• AES-256-GCM шифрование каждой записи\n"
-            "• Генератор безопасных паролей\n"
-            "• Таблица с маскировкой паролей\n"
-            "• Глобальный переключатель паролей (Ctrl+Shift+P)\n"
-            "• Поиск по записям\n\n"
+            "Реализовано в Спринте 4:\n"
+            "• Безопасный буфер обмена с авто-очисткой\n"
+            "• Платформозависимые адаптеры (Windows/Mac/Linux)\n"
+            "• Мониторинг и защита от перехвата\n"
+            "• Шифрование данных в памяти\n\n"
             f"База данных:\n{os.path.join(BASE_DIR, 'src', 'database', 'cryptosafe.db')}"
         )
 
@@ -636,11 +709,24 @@ class CryptoSafeApp(QMainWindow):
         self.status_bar.showMessage(f"Добавлена запись: {data.get('title', 'без названия')}")
         self.state.update_activity()
 
-    def on_clipboard_copied(self, preview: str):
-        self.status_bar.showMessage(f"Скопировано в буфер обмена: {preview}... (будет очищен через 30 сек)")
+    def on_clipboard_copied_event(self, data):
+        """Обработчик события копирования в буфер"""
+        if data:
+            data_type = data.get('data_type', 'текст')
+            timeout = data.get('timeout', 30)
+            self.status_bar.showMessage(
+                f"Скопирован {data_type} в буфер обмена (очистится через {timeout} сек)"
+            )
 
-    def on_clipboard_cleared(self):
-        self.status_bar.showMessage("Буфер обмена очищен")
+    def on_clipboard_cleared_event(self, data):
+        """Обработчик события очистки буфера"""
+        reason = data.get('reason', 'programmatic') if data else 'programmatic'
+        if reason == 'timeout':
+            self.status_bar.showMessage("Буфер обмена автоматически очищен")
+        elif reason == 'manual':
+            self.status_bar.showMessage("Буфер обмена очищен пользователем")
+        else:
+            self.status_bar.showMessage("Буфер обмена очищен")
 
 
 def main():

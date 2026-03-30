@@ -304,18 +304,20 @@ class SecureTable(QTreeWidget):
         entry_id = self._item_ids[idx]
 
         if action == copy_title:
-            if hasattr(self.parent(), 'clipboard_manager'):
-                self.parent().clipboard_manager.copy_to_clipboard(item.text(0))
+            if hasattr(self.parent(), 'copy_to_clipboard'):
+                self.parent().copy_to_clipboard(item.text(0), data_type="title", entry_id=entry_id)
         elif action == copy_username:
-            if hasattr(self.parent(), 'clipboard_manager'):
-                self.parent().clipboard_manager.copy_to_clipboard(item.text(1))
+            if hasattr(self.parent(), 'copy_to_clipboard'):
+                full_username = self.parent().entry_manager.get_entry(entry_id).get('username', '')
+                self.parent().copy_to_clipboard(full_username, data_type="username", entry_id=entry_id)
         elif action == copy_password:
             password = self._passwords[idx]
-            if hasattr(self.parent(), 'clipboard_manager'):
-                self.parent().clipboard_manager.copy_to_clipboard(password)
+            if hasattr(self.parent(), 'copy_to_clipboard'):
+                self.parent().copy_to_clipboard(password, data_type="password", entry_id=entry_id)
         elif action == copy_url:
-            if hasattr(self.parent(), 'clipboard_manager'):
-                self.parent().clipboard_manager.copy_to_clipboard(item.text(3))
+            if hasattr(self.parent(), 'copy_to_clipboard'):
+                full_url = self.parent().entry_manager.get_entry(entry_id).get('url', '')
+                self.parent().copy_to_clipboard(full_url, data_type="url", entry_id=entry_id)
         elif action == edit_action:
             self.item_double_clicked.emit({'id': entry_id})
         elif action == delete_action:
