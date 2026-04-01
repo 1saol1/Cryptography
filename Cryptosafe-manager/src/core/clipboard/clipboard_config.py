@@ -24,36 +24,60 @@ class ClipboardSettings:
     DEFAULT_NOTIFICATIONS_ENABLED = True
     DEFAULT_WARN_BEFORE_CLEAR = 5
 
+    NEVER_TIMEOUT = 0
+
     def __init__(self, config_manager):
         self.config = config_manager
+        self._ensure_table_structure()
         self._load_all()
 
+    def _ensure_table_structure(self):
+        try:
+            conn = self.config._get_connection()
+
+            cursor = conn.execute("PRAGMA table_info(settings)")
+            columns = [col[1] for col in cursor.fetchall()]
+
+            if 'setting_value' not in columns and 'value' in columns:
+                try:
+                    conn.execute("ALTER TABLE settings RENAME COLUMN value TO setting_value")
+                    print("[ClipboardSettings] Переименована колонка value -> setting_value")
+                except:
+                    pass
+            elif 'setting_value' not in columns:
+                try:
+                    conn.execute("ALTER TABLE settings ADD COLUMN setting_value TEXT")
+                    print("[ClipboardSettings] Добавлена колонка setting_value")
+                except:
+                    pass
+
+            if 'encrypted' not in columns:
+                try:
+                    conn.execute("ALTER TABLE settings ADD COLUMN encrypted INTEGER DEFAULT 0")
+                    print("[ClipboardSettings] Добавлена колонка encrypted")
+                except:
+                    pass
+
+            conn.commit()
+            conn.close()
+        except Exception as e:
+            print(f"[ClipboardSettings] Ошибка проверки таблицы: {e}")
+
     def _load_all(self):
-        self.timeout = self._get_int(self.KEY_TIMEOUT, self.DEFAULT_TIMEOUT)
-        self.security_level = self.config.get(
-            self.KEY_SECURITY_LEVEL,
-            self.DEFAULT_SECURITY_LEVEL
-        )
-        self.monitor_enabled = self._get_bool(
-            self.KEY_MONITOR_ENABLED,
-            self.DEFAULT_MONITOR_ENABLED
-        )
-        self.monitor_interval = self._get_int(
-            self.KEY_MONITOR_INTERVAL,
-            self.DEFAULT_MONITOR_INTERVAL
-        )
-        self.suspicious_threshold = self._get_int(
-            self.KEY_SUSPICIOUS_THRESHOLD,
-            self.DEFAULT_SUSPICIOUS_THRESHOLD
-        )
-        self.notifications_enabled = self._get_bool(
-            self.KEY_NOTIFICATIONS_ENABLED,
-            self.DEFAULT_NOTIFICATIONS_ENABLED
-        )
-        self.warn_before_clear = self._get_int(
-            self.KEY_WARN_BEFORE_CLEAR,
-            self.DEFAULT_WARN_BEFORE_CLEAR
-        )
+        timeout_str = self.config.get(self.KEY_TIMEOUT, str(self.DEFAULT_TIMEOUT))
+        try:
+            self.timeout = int(timeout_str)
+            if self.timeout != self.NEVER_TIMEOUT:
+                self.timeout = max(5, min(300, self.timeout))
+        except:
+            self.timeout = self.DEFAULT_TIMEOUT
+
+        self.security_level = self.config.get(self.KEY_SECURITY_LEVEL, self.DEFAULT_SECURITY_LEVEL)
+        self.monitor_enabled = self._get_bool(self.KEY_MONITOR_ENABLED, self.DEFAULT_MONITOR_ENABLED)
+        self.monitor_interval = self._get_int(self.KEY_MONITOR_INTERVAL, self.DEFAULT_MONITOR_INTERVAL)
+        self.suspicious_threshold = self._get_int(self.KEY_SUSPICIOUS_THRESHOLD, self.DEFAULT_SUSPICIOUS_THRESHOLD)
+        self.notifications_enabled = self._get_bool(self.KEY_NOTIFICATIONS_ENABLED, self.DEFAULT_NOTIFICATIONS_ENABLED)
+        self.warn_before_clear = self._get_int(self.KEY_WARN_BEFORE_CLEAR, self.DEFAULT_WARN_BEFORE_CLEAR)
 
     def _get_int(self, key: str, default: int) -> int:
         try:
@@ -80,21 +104,35 @@ class ClipboardSettings:
 
         if level == SecurityLevel.STANDARD:
             self.timeout = 30
-            self.monitor_enabled = True
             self.monitor_interval = 2
             self.warn_before_clear = 5
         elif level == SecurityLevel.SECURE:
             self.timeout = 15
-            self.monitor_enabled = True
             self.monitor_interval = 1
             self.warn_before_clear = 3
         elif level == SecurityLevel.PARANOID:
             self.timeout = 5
-            self.monitor_enabled = True
             self.monitor_interval = 0.5
             self.warn_before_clear = 1
 
         self.save()
+
+    def add_default_settings(self):
+        default_settings = [
+            (self.KEY_TIMEOUT, str(self.DEFAULT_TIMEOUT)),
+            (self.KEY_SECURITY_LEVEL, self.DEFAULT_SECURITY_LEVEL),
+            (self.KEY_MONITOR_ENABLED, str(self.DEFAULT_MONITOR_ENABLED).lower()),
+            (self.KEY_MONITOR_INTERVAL, str(self.DEFAULT_MONITOR_INTERVAL)),
+            (self.KEY_SUSPICIOUS_THRESHOLD, str(self.DEFAULT_SUSPICIOUS_THRESHOLD)),
+            (self.KEY_NOTIFICATIONS_ENABLED, str(self.DEFAULT_NOTIFICATIONS_ENABLED).lower()),
+            (self.KEY_WARN_BEFORE_CLEAR, str(self.DEFAULT_WARN_BEFORE_CLEAR)),
+        ]
+
+        for key, value in default_settings:
+            existing = self.config.get(key)
+            if existing is None:
+                self.config.set(key, value)
+                print(f"[ClipboardSettings] Добавлена настройка {key} = {value}")
 
     def get_preset_profile(self, profile_name: str) -> dict:
         profiles = {
@@ -120,32 +158,12 @@ class ClipboardSettings:
                 "description": "Общедоступный компьютер"
             }
         }
-
         return profiles.get(profile_name, profiles["standard"])
 
     def apply_profile(self, profile_name: str):
         profile = self.get_preset_profile(profile_name)
-
         self.timeout = profile["timeout"]
         self.monitor_enabled = profile["monitor_enabled"]
         self.notifications_enabled = profile["notifications_enabled"]
         self.warn_before_clear = profile["warn_before_clear"]
-
         self.save()
-
-    def add_default_settings(self):
-        default_settings = [
-            (self.KEY_TIMEOUT, str(self.DEFAULT_TIMEOUT)),
-            (self.KEY_SECURITY_LEVEL, self.DEFAULT_SECURITY_LEVEL),
-            (self.KEY_MONITOR_ENABLED, str(self.DEFAULT_MONITOR_ENABLED).lower()),
-            (self.KEY_MONITOR_INTERVAL, str(self.DEFAULT_MONITOR_INTERVAL)),
-            (self.KEY_SUSPICIOUS_THRESHOLD, str(self.DEFAULT_SUSPICIOUS_THRESHOLD)),
-            (self.KEY_NOTIFICATIONS_ENABLED, str(self.DEFAULT_NOTIFICATIONS_ENABLED).lower()),
-            (self.KEY_WARN_BEFORE_CLEAR, str(self.DEFAULT_WARN_BEFORE_CLEAR)),
-        ]
-
-        for key, value in default_settings:
-            existing = self.config.get(key)
-            if existing is None:
-                self.config.set(key, value)
-                print(f"Добавлена настройка {key} = {value}")

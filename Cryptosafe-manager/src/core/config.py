@@ -78,7 +78,6 @@ class ConfigManager:
 
     def set(self, key: str, value: str, encrypted: bool = False):
         with self._get_connection() as conn:
-            # Проверяем, какие колонки есть
             cursor = conn.execute("PRAGMA table_info(settings)")
             columns = [col[1] for col in cursor.fetchall()]
 
@@ -89,7 +88,7 @@ class ConfigManager:
                     VALUES (?, ?, ?)
                 """, (key, value, int(encrypted)))
             elif 'name' in columns and 'value' in columns:
-                # Старая структура
+
                 conn.execute("""
                     INSERT OR REPLACE INTO settings
                     (name, value)

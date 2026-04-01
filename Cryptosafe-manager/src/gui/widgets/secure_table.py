@@ -274,23 +274,32 @@ class SecureTable(QTreeWidget):
         super().leaveEvent(event)
 
     def contextMenuEvent(self, event):
+        print("[DEBUG] contextMenuEvent ВЫЗВАН!")
         menu = QMenu(self)
 
         copy_title = menu.addAction("Копировать название")
         copy_username = menu.addAction("Копировать логин")
         copy_password = menu.addAction("Копировать пароль")
         copy_url = menu.addAction("Копировать URL")
+
+        menu.addSeparator()
+        copy_all = menu.addAction("📋 Копировать всё (логин + пароль)")
+
         menu.addSeparator()
         edit_action = menu.addAction("Редактировать")
         delete_action = menu.addAction("Удалить")
 
-        action = menu.exec(event.globalPos())
+        item = self.itemAt(event.pos())
 
-        selected = self.selectedItems()
-        if not selected:
+        if not item:
+            menu.clear()
+            clear_action = menu.addAction("🗑️ Очистить буфер")
+            action = menu.exec(event.globalPos())
+            if action == clear_action and hasattr(self.parent(), 'manual_clear_clipboard'):
+                self.parent().manual_clear_clipboard()
             return
 
-        item = selected[0]
+        action = menu.exec(event.globalPos())
 
         idx = -1
         for i, it in enumerate(self._items):
@@ -304,21 +313,56 @@ class SecureTable(QTreeWidget):
         entry_id = self._item_ids[idx]
 
         if action == copy_title:
+            print("[DEBUG] ВЕТКА copy_title")
             if hasattr(self.parent(), 'copy_to_clipboard'):
-                self.parent().copy_to_clipboard(item.text(0), data_type="title", entry_id=entry_id)
+                text_to_copy = item.text(0)
+                print(f"[DEBUG] Копируем название: {text_to_copy}")
+                self.parent().copy_to_clipboard(text_to_copy, data_type="title", entry_id=entry_id)
+
         elif action == copy_username:
+            print("[DEBUG] ВЕТКА copy_username")
             if hasattr(self.parent(), 'copy_to_clipboard'):
-                full_username = self.parent().entry_manager.get_entry(entry_id).get('username', '')
-                self.parent().copy_to_clipboard(full_username, data_type="username", entry_id=entry_id)
+                try:
+                    entry_data = self.parent().entry_manager.get_entry(entry_id)
+                    full_username = entry_data.get('username', '') if entry_data else ''
+                    print(f"[DEBUG] Копируем логин: {full_username}")
+                    self.parent().copy_to_clipboard(full_username, data_type="username", entry_id=entry_id)
+                except Exception as e:
+                    print(f"[DEBUG] Ошибка: {e}")
+                    self.parent().copy_to_clipboard(item.text(1), data_type="username", entry_id=entry_id)
+
         elif action == copy_password:
+            print("[DEBUG] ВЕТКА copy_password")
             password = self._passwords[idx]
+            print(f"[DEBUG] Копируем пароль: {password[:10]}...")
             if hasattr(self.parent(), 'copy_to_clipboard'):
                 self.parent().copy_to_clipboard(password, data_type="password", entry_id=entry_id)
         elif action == copy_url:
             if hasattr(self.parent(), 'copy_to_clipboard'):
-                full_url = self.parent().entry_manager.get_entry(entry_id).get('url', '')
-                self.parent().copy_to_clipboard(full_url, data_type="url", entry_id=entry_id)
+                try:
+                    entry_data = self.parent().entry_manager.get_entry(entry_id)
+                    full_url = entry_data.get('url', '') if entry_data else ''
+                    print(f"[DEBUG] Копируем URL: {full_url}")
+                    self.parent().copy_to_clipboard(full_url, data_type="url", entry_id=entry_id)
+                except Exception as e:
+                    print(f"Ошибка получения URL: {e}")
+                    self.parent().copy_to_clipboard(item.text(3), data_type="url", entry_id=entry_id)
+
+        elif action == copy_all:
+            if hasattr(self.parent(), 'copy_to_clipboard'):
+                try:
+                    entry_data = self.parent().entry_manager.get_entry(entry_id)
+                    full_username = entry_data.get('username', '') if entry_data else ''
+                    password = self._passwords[idx]
+                    combined = f"{full_username}:{password}"
+                    print(f"[DEBUG] Копируем всё: {combined}")
+                    self.parent().copy_to_clipboard(combined, data_type="credentials", entry_id=entry_id)
+                    self.parent().status_bar.showMessage(f"Скопированы учетные данные для {full_username}")
+                except Exception as e:
+                    print(f"Ошибка копирования: {e}")
+
         elif action == edit_action:
             self.item_double_clicked.emit({'id': entry_id})
+
         elif action == delete_action:
             self.item_delete_requested.emit({'id': entry_id})

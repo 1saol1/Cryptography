@@ -23,3 +23,5 @@ USER_LOGGED_OUT = "UserLoggedOut"
 
 CLIPBOARD_COPIED = "ClipboardCopied"
 CLIPBOARD_CLEARED = "ClipboardCleared"
+CLIPBOARD_SUSPICIOUS_ACCESS = "ClipboardSuspiciousAccess"
+CLIPBOARD_PROTECTION_ENABLED = "ClipboardProtectionEnabled"

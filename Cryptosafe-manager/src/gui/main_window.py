@@ -24,11 +24,13 @@ from src.core.crypto.authentication import AuthenticationService
 from src.core.crypto.key_manager import KeyManager
 from src.core.crypto.abstract import VaultEncryptionService
 from src.core.state_manager import StateManager
-from src.core.config import ConfigManager  # ДОБАВЛЕН ИМПОРТ
+from src.core.config import ConfigManager
 
 from src.core.clipboard.clipboard_service import ClipboardService
 from src.core.clipboard.clipboard_monitor import ClipboardMonitor
 from src.core.clipboard.clipboard_config import ClipboardSettings
+from src.core.events import (CLIPBOARD_SUSPICIOUS_ACCESS,
+                             CLIPBOARD_PROTECTION_ENABLED)
 
 from src.core.vault.entry_manager import EntryManager
 from src.gui.widgets.entry_dialog import EntryDialog
@@ -111,7 +113,6 @@ class CryptoSafeApp(QMainWindow):
         self.db = Database(db_path)
         self.db.initialize()
 
-        # ========== СОЗДАЕМ CONFIG MANAGER ==========
         self.config_manager = ConfigManager(db_path)
 
         self.key_manager = KeyManager()
@@ -146,41 +147,34 @@ class CryptoSafeApp(QMainWindow):
         self.timer.timeout.connect(self.check_session_timeout)
         self.timer.start(60000)
 
-        # ========== НАСТРОЙКИ БУФЕРА ОБМЕНА ==========
-        # Создаем настройки буфера
         self.clipboard_settings = ClipboardSettings(self.config_manager)
 
-        # Добавляем настройки по умолчанию (если их нет)
         self.clipboard_settings.add_default_settings()
 
-        # Создаем сервис буфера
         self.clipboard_service = ClipboardService(
             event_bus=self.event_bus,
             state_manager=self.state,
             config_manager=self.config_manager
         )
 
-        # Создаем монитор буфера
         self.clipboard_monitor = ClipboardMonitor(
             clipboard_service=self.clipboard_service,
             event_bus=self.event_bus,
             config_manager=self.config_manager
         )
 
-        # Загружаем настройки из БД
         self._load_clipboard_settings()
 
-        # Подписываемся на события буфера обмена
         self.event_bus.subscribe(CLIPBOARD_COPIED, self.on_clipboard_copied_event)
         self.event_bus.subscribe(CLIPBOARD_CLEARED, self.on_clipboard_cleared_event)
+        self.event_bus.subscribe(CLIPBOARD_SUSPICIOUS_ACCESS, self.on_suspicious_access)
+        self.event_bus.subscribe(CLIPBOARD_PROTECTION_ENABLED, self.on_protection_enabled)
 
-        # Запускаем мониторинг
         self.clipboard_monitor.start_monitoring()
 
         print("[APP] Сервис буфера обмена инициализирован")
 
     def _load_clipboard_settings(self):
-        """Загружает настройки буфера обмена из базы данных"""
         try:
             timeout = self.clipboard_settings.timeout
             self.clipboard_service.set_timeout(timeout)
@@ -193,7 +187,8 @@ class CryptoSafeApp(QMainWindow):
             print(f"[APP] Ошибка загрузки настроек буфера: {e}")
 
     def copy_to_clipboard(self, text: str, data_type: str = "text", entry_id: str = None):
-        """Универсальный метод для копирования в буфер обмена"""
+        print(f"[DEBUG] main_window.copy_to_clipboard вызван: type={data_type}, text={text[:20]}...")
+
         if not self.state.is_active():
             QMessageBox.warning(self, "Доступ запрещен", "Хранилище заблокировано. Выполните вход.")
             return False
@@ -207,10 +202,20 @@ class CryptoSafeApp(QMainWindow):
             source_entry_id=entry_id
         )
 
+        print(f"[DEBUG] Результат копирования: {success}")
+
         if success:
             self.state.update_activity()
 
         return success
+
+    def manual_clear_clipboard(self):
+        if hasattr(self, 'clipboard_service'):
+            self.clipboard_service.clear_clipboard(manual=True)
+            self.status_bar.showMessage("Буфер обмена очищен вручную")
+            print("[APP] Ручная очистка буфера")
+        else:
+            print("[APP] Сервис буфера не доступен")
 
     def changeEvent(self, event):
         if event.type() == QEvent.Type.WindowStateChange:
@@ -272,7 +277,6 @@ class CryptoSafeApp(QMainWindow):
     def closeEvent(self, event):
         print("Завершение работы приложения")
 
-        # Останавливаем мониторинг и очищаем буфер
         if hasattr(self, 'clipboard_monitor'):
             self.clipboard_monitor.stop_monitoring()
         if hasattr(self, 'clipboard_service'):
@@ -363,7 +367,7 @@ class CryptoSafeApp(QMainWindow):
 
         toolbar.addSeparator()
 
-        filter_btn = QPushButton("🔍 Фильтры")
+        filter_btn = QPushButton("Фильтры")
         filter_btn.setToolTip("Открыть диалог фильтров")
         filter_btn.clicked.connect(self.open_filter_dialog)
         toolbar.addWidget(filter_btn)
@@ -387,6 +391,13 @@ class CryptoSafeApp(QMainWindow):
         change_password_action = QAction("Сменить пароль", self)
         change_password_action.triggered.connect(self.open_change_password)
         toolbar.addAction(change_password_action)
+
+        toolbar.addSeparator()
+
+        clear_clipboard_btn = QPushButton("🗑️ Очистить буфер")
+        clear_clipboard_btn.setToolTip("Очистить буфер обмена")
+        clear_clipboard_btn.clicked.connect(self.manual_clear_clipboard)
+        toolbar.addWidget(clear_clipboard_btn)
 
     def create_main_table(self):
         central_widget = QWidget()
@@ -710,7 +721,6 @@ class CryptoSafeApp(QMainWindow):
         self.state.update_activity()
 
     def on_clipboard_copied_event(self, data):
-        """Обработчик события копирования в буфер"""
         if data:
             data_type = data.get('data_type', 'текст')
             timeout = data.get('timeout', 30)
@@ -719,7 +729,6 @@ class CryptoSafeApp(QMainWindow):
             )
 
     def on_clipboard_cleared_event(self, data):
-        """Обработчик события очистки буфера"""
         reason = data.get('reason', 'programmatic') if data else 'programmatic'
         if reason == 'timeout':
             self.status_bar.showMessage("Буфер обмена автоматически очищен")
@@ -727,6 +736,53 @@ class CryptoSafeApp(QMainWindow):
             self.status_bar.showMessage("Буфер обмена очищен пользователем")
         else:
             self.status_bar.showMessage("Буфер обмена очищен")
+
+    def on_suspicious_access(self, data):
+        if data:
+            access_type = data.get('type', 'unknown')
+            count = data.get('suspicious_count', 0)
+
+            if access_type == 'external_change':
+                self.status_bar.showMessage(
+                    f"ВНИМАНИЕ: Обнаружено внешнее изменение буфера обмена! (счетчик: {count})"
+                )
+                print(f"Подозрительная активность: внешнее изменение, счетчик={count}")
+
+            elif access_type == 'read_detected':
+                self.status_bar.showMessage(
+                    f"ВНИМАНИЕ: Обнаружено чтение буфера обмена! (счетчик: {count})"
+                )
+                print(f"[APP] Подозрительная активность: чтение буфера, счетчик={count}")
+
+            threshold = self.clipboard_settings.suspicious_threshold if hasattr(self, 'clipboard_settings') else 3
+            if count >= threshold // 2 and count < threshold:
+                QMessageBox.warning(
+                    self,
+                    "Предупреждение о безопасности",
+                    f"Обнаружена подозрительная активность с буфером обмена!\n\n"
+                    f"Тип: {'внешнее изменение' if access_type == 'external_change' else 'чтение буфера'}\n"
+                    f"Счетчик подозрений: {count}/{threshold}\n\n"
+                    f"При достижении {threshold} подозрений будет активирован режим защиты."
+                )
+
+    def on_protection_enabled(self, data):
+        self.status_bar.showMessage("РЕЖИМ ЗАЩИТЫ АКТИВИРОВАН! Буфер очищен, таймаут = 5 сек")
+
+        if data:
+            count = data.get('suspicious_count', 0)
+            print(f"[APP] Режим защиты активирован, подозрений: {count}")
+
+        QMessageBox.warning(
+            self,
+            "Режим защиты активирован",
+            "РЕЖИМ ЗАЩИТЫ БУФЕРА ОБМЕНА АКТИВИРОВАН 🔒\n\n"
+            "Обнаружена подозрительная активность с буфером обмена.\n\n"
+            "Принятые меры:\n"
+            "• Буфер обмена немедленно очищен\n"
+            "• Таймаут авто-очистки установлен на 5 секунд\n"
+            "• Все новые копирования будут очищаться через 5 секунд\n\n"
+            "Будьте внимательны при копировании паролей!"
+        )
 
 
 def main():

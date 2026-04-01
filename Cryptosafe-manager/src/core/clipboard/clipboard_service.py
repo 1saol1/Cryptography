@@ -30,7 +30,8 @@ class ClipboardService:
             timeout_str = self.config.get("clipboard_timeout", "30")
             self.timeout_seconds = int(timeout_str)
 
-            self.timeout_seconds = max(5, min(300, self.timeout_seconds))
+            if self.timeout_seconds != 0:
+                self.timeout_seconds = max(5, min(300, self.timeout_seconds))
 
             self.security_level = self.config.get("clipboard_security_level", "standard")
 
@@ -47,6 +48,11 @@ class ClipboardService:
             print(f"Ошибка сохранения настроек: {e}")
 
     def set_timeout(self, seconds: int):
+        if seconds == 0:
+            self.timeout_seconds = 0
+            self._save_settings()
+            return
+
         seconds = max(5, min(300, seconds))
         self.timeout_seconds = seconds
         self._save_settings()
@@ -64,17 +70,19 @@ class ClipboardService:
         self.security_level = level
         self._save_settings()
 
-    def copy_to_clipboard(
-            self,
-            data: str,
-            data_type: str = "text",
-            source_entry_id: Optional[str] = None,
-            show_notification: bool = True
-    ) -> bool:
+    def copy_to_clipboard(self, data: str, data_type: str = "text",
+                          source_entry_id: Optional[str] = None,
+                          show_notification: bool = True) -> bool:
+        print(f"[CLIPBOARD] ===== НАЧАЛО КОПИРОВАНИЯ =====")
+
+        print(f"[CLIPBOARD] copy_to_clipboard вызван: type={data_type}, data={data[:20]}...")
+
         if self.state_manager.is_locked or not self.state_manager.logged_in:
+            print("[CLIPBOARD] ОШИБКА: хранилище заблокировано!")
             return False
 
         if not data:
+            print("[CLIPBOARD] ОШИБКА: пустые данные!")
             return False
 
         with self._timer_lock:
@@ -86,11 +94,15 @@ class ClipboardService:
                 source_entry_id=source_entry_id
             )
 
+            print(f"[CLIPBOARD] Копируем в системный буфер через адаптер...")
             success = self.platform_adapter.copy_to_clipboard(data)
 
             if not success:
+                print("[CLIPBOARD] ОШИБКА: адаптер не смог скопировать!")
                 self._current_item = None
                 return False
+
+            print(f"[CLIPBOARD] УСПЕШНО скопировано!")
 
             self._start_timer()
 
@@ -100,12 +112,14 @@ class ClipboardService:
                 'timeout': self.timeout_seconds,
                 'timestamp': datetime.utcnow().isoformat()
             })
-
-            print(f"Скопировано: {data_type}, очистка через {self.timeout_seconds} сек")
-
+            print(f"[CLIPBOARD] ===== КОПИРОВАНИЕ УСПЕШНО ЗАВЕРШЕНО =====")
             return True
 
     def _start_timer(self):
+        if self.timeout_seconds == 0:
+            print("Авто-очистка отключена")
+            return
+
         if self._timer:
             self._timer.cancel()
             self._timer = None
@@ -163,6 +177,17 @@ class ClipboardService:
                     'remaining_seconds': 0
                 }
 
+            if self.timeout_seconds == 0:
+                return {
+                    'active': True,
+                    'has_content': True,
+                    'data_type': self._current_item.data_type,
+                    'source_entry_id': self._current_item.source_entry_id,
+                    'remaining_seconds': -1,  # -1 означает "никогда не очистится"
+                    'timeout_configured': 0,
+                    'auto_clear_disabled': True
+                }
+
             elapsed = (datetime.utcnow() - self._current_item.copied_at).total_seconds()
             remaining = max(0, self.timeout_seconds - elapsed)
 
@@ -172,7 +197,8 @@ class ClipboardService:
                 'data_type': self._current_item.data_type,
                 'source_entry_id': self._current_item.source_entry_id,
                 'remaining_seconds': int(remaining),
-                'timeout_configured': self.timeout_seconds
+                'timeout_configured': self.timeout_seconds,
+                'auto_clear_disabled': False
             }
 
     def get_current_data_preview(self, reveal: bool = False) -> Optional[str]:
