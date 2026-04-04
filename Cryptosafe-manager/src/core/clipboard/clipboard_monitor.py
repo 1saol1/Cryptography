@@ -72,17 +72,18 @@ class ClipboardMonitor:
         current_content = self.clipboard.platform_adapter.get_clipboard_content()
 
         if self.clipboard.is_clipboard_active():
-            current_service_data = self.clipboard.get_current_data_preview(reveal=False)
+            our_data = self.clipboard.get_current_data_preview(reveal=True)
 
-            if current_content and current_service_data:
-                service_data_full = self.clipboard.get_current_data_preview(reveal=True)
-
-                if service_data_full and current_content != service_data_full:
-                    self._on_external_change(current_content)
+            if our_data and current_content and current_content != our_data:
+                self._on_external_change(current_content)
 
         if self._last_known_content is not None:
             if current_content != self._last_known_content:
-                self._on_clipboard_read()
+                our_data = self.clipboard.get_current_data_preview(reveal=True)
+                if our_data and current_content == our_data:
+                    print("Наше собственное копирование, игнорируем")
+                else:
+                    self._on_clipboard_read()
 
         self._last_known_content = current_content
         self._last_check_time = datetime.utcnow()

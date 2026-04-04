@@ -26,30 +26,36 @@ class WindowsClipboardAdapter(ClipboardAdapter):
             self.win32clipboard = win32clipboard
             self.win32con = win32con
             self._available = True
-            print("[ADAPTER] Windows адаптер инициализирован")
-        except ImportError:
+        except ImportError as e:
             self._available = False
-            print("[ADAPTER] win32clipboard не установлен")
+            print(f"Ошибка импорта: {e}")
 
     def copy_to_clipboard(self, data: str) -> bool:
-        print(f"[ADAPTER] Windows copy_to_clipboard вызван, data={data[:20]}...")
+
         if not self._available:
-            print("[ADAPTER] Адаптер не доступен")
+            print("Адаптер не доступен")
             return False
 
-        try:
-            self.win32clipboard.OpenClipboard()
-            self.win32clipboard.EmptyClipboard()
-            self.win32clipboard.SetClipboardText(data, self.win32clipboard.CF_UNICODETEXT)
-            self.win32clipboard.CloseClipboard()
-            print("[ADAPTER] Windows копирование УСПЕШНО")
-            return True
-        except Exception as e:
-            print(f"[ADAPTER] Windows copy error: {e}")
+        for attempt in range(3):
             try:
+                self.win32clipboard.OpenClipboard()
+                self.win32clipboard.EmptyClipboard()
+                self.win32clipboard.SetClipboardData(self.win32con.CF_UNICODETEXT, data)
                 self.win32clipboard.CloseClipboard()
-            except:
-                pass
+                return True
+            except Exception as e:
+                print(f"Попытка {attempt + 1} ошибка: {e}")
+                try:
+                    self.win32clipboard.CloseClipboard()
+                except:
+                    pass
+                import time
+                time.sleep(0.1)
+        try:
+            import pyperclip
+            pyperclip.copy(data)
+            return True
+        except:
             return False
 
     def clear_clipboard(self) -> bool:
@@ -74,10 +80,13 @@ class WindowsClipboardAdapter(ClipboardAdapter):
 
         try:
             self.win32clipboard.OpenClipboard()
-            if self.win32clipboard.IsClipboardFormatAvailable(self.win32clipboard.CF_UNICODETEXT):
-                data = self.win32clipboard.GetClipboardText()
-                self.win32clipboard.CloseClipboard()
-                return data
+
+            if self.win32clipboard.IsClipboardFormatAvailable(self.win32con.CF_UNICODETEXT):
+                handle = self.win32clipboard.GetClipboardData(self.win32con.CF_UNICODETEXT)
+                if handle:
+                    data = handle
+                    self.win32clipboard.CloseClipboard()
+                    return str(data) if data else None
             self.win32clipboard.CloseClipboard()
             return None
         except Exception as e:
@@ -98,25 +107,22 @@ class MacOSClipboardAdapter(ClipboardAdapter):
             self.NSPasteboard = NSPasteboard
             self.NSPasteboardTypeString = NSPasteboardTypeString
             self._available = True
-            print("[ADAPTER] macOS адаптер инициализирован")
         except ImportError:
             self._available = False
-            print("[ADAPTER] pyobjc не установлен")
+            print("pyobjc не установлен")
 
     def copy_to_clipboard(self, data: str) -> bool:
-        print(f"[ADAPTER] macOS copy_to_clipboard вызван, data={data[:20]}...")
         if not self._available:
-            print("[ADAPTER] Адаптер не доступен")
+            print("Адаптер не доступен")
             return False
 
         try:
             pb = self.NSPasteboard.generalPasteboard()
             pb.declareTypes_owner_([self.NSPasteboardTypeString], None)
             pb.setString_forType_(data, self.NSPasteboardTypeString)
-            print("[ADAPTER] macOS копирование УСПЕШНО")
             return True
         except Exception as e:
-            print(f"[ADAPTER] macOS copy error: {e}")
+            print(f"macOS copy error: {e}")
             return False
 
     def clear_clipboard(self) -> bool:
@@ -150,10 +156,9 @@ class LinuxClipboardAdapter(ClipboardAdapter):
             import pyperclip
             self.pyperclip = pyperclip
             self._available = True
-            print("[ADAPTER] Linux адаптер инициализирован (pyperclip)")
         except ImportError:
             self._available = False
-            print("[ADAPTER] Pyperclip не установлен")
+            print("Pyperclip не установлен")
 
     def copy_to_clipboard(self, data: str) -> bool:
         print(f"[ADAPTER] Linux copy_to_clipboard вызван, data={data[:20]}...")
@@ -163,10 +168,9 @@ class LinuxClipboardAdapter(ClipboardAdapter):
 
         try:
             self.pyperclip.copy(data)
-            print("[ADAPTER] Linux копирование УСПЕШНО")
             return True
         except Exception as e:
-            print(f"[ADAPTER] Linux copy error: {e}")
+            print(f"Linux copy error: {e}")
             return False
 
     def clear_clipboard(self) -> bool:
@@ -198,23 +202,20 @@ class FallbackClipboardAdapter(ClipboardAdapter):
             import pyperclip
             self.pyperclip = pyperclip
             self._available = True
-            print("[ADAPTER] Fallback адаптер инициализирован (pyperclip)")
         except ImportError:
             self._available = False
-            print("[ADAPTER] Pyperclip не установлен, базовая функциональность недоступна")
+            print("Pyperclip не установлен, базовая функциональность недоступна")
 
     def copy_to_clipboard(self, data: str) -> bool:
-        print(f"[ADAPTER] Fallback copy_to_clipboard вызван, data={data[:20]}...")
         if not self._available:
-            print("[ADAPTER] Нет доступного адаптера для копирования")
+            print("Нет доступного адаптера для копирования")
             return False
 
         try:
             self.pyperclip.copy(data)
-            print("[ADAPTER] Fallback копирование УСПЕШНО")
             return True
         except Exception as e:
-            print(f"[ADAPTER] Fallback copy error: {e}")
+            print(f"Fallback copy error: {e}")
             return False
 
     def clear_clipboard(self) -> bool:
@@ -225,7 +226,7 @@ class FallbackClipboardAdapter(ClipboardAdapter):
             self.pyperclip.copy("")
             return True
         except Exception as e:
-            print(f"[ADAPTER] Fallback clear error: {e}")
+            print(f"Fallback clear error: {e}")
             return False
 
     def get_clipboard_content(self) -> Optional[str]:
@@ -235,37 +236,37 @@ class FallbackClipboardAdapter(ClipboardAdapter):
         try:
             return self.pyperclip.paste()
         except Exception as e:
-            print(f"[ADAPTER] Fallback get error: {e}")
+            print(f"Fallback get error: {e}")
             return None
 
 
 def get_platform_adapter() -> ClipboardAdapter:
     system = platform.system()
-    print(f"[ADAPTER] Определена платформа: {system}")
+    print(f"Определена платформа: {system}")
 
     if system == "Windows":
         adapter = WindowsClipboardAdapter()
         if adapter._available:
-            print("[ADAPTER] Используется Windows адаптер")
+            print("Используется Windows адаптер")
             return adapter
         else:
-            print("[ADAPTER] Windows адаптер не доступен, пробуем fallback")
+            print("Windows адаптер не доступен, пробуем fallback")
 
     elif system == "Darwin":
         adapter = MacOSClipboardAdapter()
         if adapter._available:
-            print("[ADAPTER] Используется macOS адаптер")
+            print("Используется macOS адаптер")
             return adapter
         else:
-            print("[ADAPTER] macOS адаптер не доступен, пробуем fallback")
+            print("macOS адаптер не доступен, пробуем fallback")
 
     elif system == "Linux":
         adapter = LinuxClipboardAdapter()
         if adapter._available:
-            print("[ADAPTER] Используется Linux адаптер")
+            print("Используется Linux адаптер")
             return adapter
         else:
-            print("[ADAPTER] Linux адаптер не доступен, пробуем fallback")
+            print("Linux адаптер не доступен, пробуем fallback")
 
-    print("[ADAPTER] Используется Fallback адаптер")
+    print("Используется Fallback адаптер")
     return FallbackClipboardAdapter()

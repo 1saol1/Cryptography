@@ -4,7 +4,7 @@ from datetime import datetime
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QMessageBox, QFileDialog,
                              QStatusBar, QLabel, QDialog,
-                             QLineEdit, QToolBar)
+                             QLineEdit, QToolBar, QSystemTrayIcon, QMenu)
 from PyQt6.QtCore import Qt, QTimer, QEvent
 from PyQt6.QtGui import QAction, QKeySequence
 
@@ -95,6 +95,7 @@ class LoginDialog(QDialog):
 class CryptoSafeApp(QMainWindow):
     def __init__(self, state, auth):
         super().__init__()
+        self._force_closing = False
         self.state = state
         self.auth = auth
         self.current_filters = {}
@@ -172,7 +173,13 @@ class CryptoSafeApp(QMainWindow):
 
         self.clipboard_monitor.start_monitoring()
 
-        print("[APP] Сервис буфера обмена инициализирован")
+        self.clipboard_status_timer = QTimer()
+        self.clipboard_status_timer.timeout.connect(self._update_clipboard_status)
+        self.clipboard_status_timer.start(1000)
+
+        self._create_tray_icon()
+
+        print("Сервис буфера обмена инициализирован")
 
     def _load_clipboard_settings(self):
         try:
@@ -182,13 +189,85 @@ class CryptoSafeApp(QMainWindow):
             security_level = self.clipboard_settings.security_level
             self.clipboard_service.set_security_level(security_level)
 
-            print(f"[APP] Загружены настройки буфера: таймаут={timeout}с, уровень={security_level}")
+            print(f"Загружены настройки буфера: таймаут={timeout}с, уровень={security_level}")
         except Exception as e:
-            print(f"[APP] Ошибка загрузки настроек буфера: {e}")
+            print(f"Ошибка загрузки настроек буфера: {e}")
+
+    def _update_clipboard_status(self):
+        if hasattr(self, 'clipboard_service'):
+            status = self.clipboard_service.get_current_status()
+            if status.get('active', False):
+                remaining = status.get('remaining_seconds', 0)
+                data_type = status.get('data_type', 'текст')
+                if remaining > 0:
+                    self.status_bar.showMessage(
+                        f"{data_type} в буфере | очистится через {remaining} сек"
+                    )
+                elif remaining == -1:
+                    self.status_bar.showMessage(
+                        f"{data_type} в буфере | авто-очистка отключена"
+                    )
+
+    def _create_tray_icon(self):
+        """Создаёт иконку в системном трее (UI-2)"""
+        from PyQt6.QtGui import QIcon
+
+        print("[DEBUG] Проверка системного трея...")
+
+        if not QSystemTrayIcon.isSystemTrayAvailable():
+            print("[APP] Системный трей не доступен на этой системе")
+            return
+
+        print("[DEBUG] Системный трей доступен, создаём иконку...")
+
+        self.tray_icon = QSystemTrayIcon(self)
+
+        try:
+            self.tray_icon.setIcon(self.style().standardIcon(6))
+            print("[DEBUG] Иконка установлена через standardIcon(6)")
+        except:
+            try:
+                self.tray_icon.setIcon(QApplication.windowIcon())
+                print("[DEBUG] Иконка установлена через QApplication.windowIcon()")
+            except:
+                from PyQt6.QtGui import QPixmap, QPainter, QColor
+                pixmap = QPixmap(16, 16)
+                pixmap.fill(QColor(0, 100, 200))
+                painter = QPainter(pixmap)
+                painter.setPen(QColor(255, 255, 255))
+                painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "🔒")
+                painter.end()
+                self.tray_icon.setIcon(QIcon(pixmap))
+                print("[DEBUG] Иконка создана программно")
+
+        tray_menu = QMenu()
+
+        show_action = tray_menu.addAction("Показать окно")
+        show_action.triggered.connect(self.show_normal)
+
+        tray_menu.addSeparator()
+
+        quit_action = tray_menu.addAction("Выйти")
+        quit_action.triggered.connect(self._force_exit)
+
+        self.tray_icon.setContextMenu(tray_menu)
+        self.tray_icon.show()
+
+        self.tray_icon.activated.connect(self._on_tray_icon_activated)
+
+        print(f"[DEBUG] Иконка трея видима? {self.tray_icon.isVisible()}")
+        print("[APP] Системный трей инициализирован")
+
+    def show_normal(self):
+        self.showNormal()
+        self.activateWindow()
+        self.raise_()
+
+    def _on_tray_icon_activated(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
+            self.show_normal()
 
     def copy_to_clipboard(self, text: str, data_type: str = "text", entry_id: str = None):
-        print(f"[DEBUG] main_window.copy_to_clipboard вызван: type={data_type}, text={text[:20]}...")
-
         if not self.state.is_active():
             QMessageBox.warning(self, "Доступ запрещен", "Хранилище заблокировано. Выполните вход.")
             return False
@@ -201,8 +280,6 @@ class CryptoSafeApp(QMainWindow):
             data_type=data_type,
             source_entry_id=entry_id
         )
-
-        print(f"[DEBUG] Результат копирования: {success}")
 
         if success:
             self.state.update_activity()
@@ -275,17 +352,44 @@ class CryptoSafeApp(QMainWindow):
             self.close()
 
     def closeEvent(self, event):
+        if hasattr(self, 'tray_icon') and self.tray_icon.isVisible() and not self._force_closing:
+            self.hide()
+            self.tray_icon.showMessage(
+                "CryptoSafe Manager",
+                "Приложение свернуто в системный трей",
+                QSystemTrayIcon.MessageIcon.Information,
+                2000
+            )
+            event.ignore()
+        else:
+            self._force_close(event)
+
+    def _force_close(self, event):
         print("Завершение работы приложения")
+        self._force_closing = True
 
         if hasattr(self, 'clipboard_monitor'):
             self.clipboard_monitor.stop_monitoring()
         if hasattr(self, 'clipboard_service'):
             self.clipboard_service.shutdown()
+        if hasattr(self, 'clipboard_status_timer'):
+            self.clipboard_status_timer.stop()
 
         self.state.end_session()
         self.key_manager.clear_cache()
         self.db.close()
         event.accept()
+
+    def _force_exit(self):
+        self._force_closing = True
+        if hasattr(self, 'tray_icon'):
+            self.tray_icon.hide()
+        if hasattr(self, 'clipboard_status_timer'):
+            self.clipboard_status_timer.stop()
+        self.state.end_session()
+        self.key_manager.clear_cache()
+        self.db.close()
+        QApplication.quit()
 
     def create_menu(self):
         menubar = self.menuBar()
@@ -303,7 +407,7 @@ class CryptoSafeApp(QMainWindow):
         file_menu.addAction(backup_action)
         file_menu.addSeparator()
         exit_action = QAction("Выход", self)
-        exit_action.triggered.connect(self.close)
+        exit_action.triggered.connect(self._force_exit)
         file_menu.addAction(exit_action)
 
         edit_menu = menubar.addMenu("Правка")
@@ -712,7 +816,10 @@ class CryptoSafeApp(QMainWindow):
             "• Безопасный буфер обмена с авто-очисткой\n"
             "• Платформозависимые адаптеры (Windows/Mac/Linux)\n"
             "• Мониторинг и защита от перехвата\n"
-            "• Шифрование данных в памяти\n\n"
+            "• Шифрование данных в памяти\n"
+            "• Индикатор состояния в статус-баре\n"
+            "• Системный трей\n"
+            "• Подсветка скопированных записей\n\n"
             f"База данных:\n{os.path.join(BASE_DIR, 'src', 'database', 'cryptosafe.db')}"
         )
 
@@ -728,6 +835,11 @@ class CryptoSafeApp(QMainWindow):
                 f"Скопирован {data_type} в буфер обмена (очистится через {timeout} сек)"
             )
 
+            # UI-2: Подсвечиваем строку, если есть source_entry_id
+            entry_id = data.get('source_entry_id')
+            if entry_id:
+                self.table.highlight_entry(entry_id)
+
     def on_clipboard_cleared_event(self, data):
         reason = data.get('reason', 'programmatic') if data else 'programmatic'
         if reason == 'timeout':
@@ -736,6 +848,9 @@ class CryptoSafeApp(QMainWindow):
             self.status_bar.showMessage("Буфер обмена очищен пользователем")
         else:
             self.status_bar.showMessage("Буфер обмена очищен")
+
+        # UI-2: Сбрасываем подсветку строки
+        self.table.clear_highlight()
 
     def on_suspicious_access(self, data):
         if data:
@@ -754,35 +869,12 @@ class CryptoSafeApp(QMainWindow):
                 )
                 print(f"[APP] Подозрительная активность: чтение буфера, счетчик={count}")
 
-            threshold = self.clipboard_settings.suspicious_threshold if hasattr(self, 'clipboard_settings') else 3
-            if count >= threshold // 2 and count < threshold:
-                QMessageBox.warning(
-                    self,
-                    "Предупреждение о безопасности",
-                    f"Обнаружена подозрительная активность с буфером обмена!\n\n"
-                    f"Тип: {'внешнее изменение' if access_type == 'external_change' else 'чтение буфера'}\n"
-                    f"Счетчик подозрений: {count}/{threshold}\n\n"
-                    f"При достижении {threshold} подозрений будет активирован режим защиты."
-                )
-
     def on_protection_enabled(self, data):
         self.status_bar.showMessage("РЕЖИМ ЗАЩИТЫ АКТИВИРОВАН! Буфер очищен, таймаут = 5 сек")
 
         if data:
             count = data.get('suspicious_count', 0)
             print(f"[APP] Режим защиты активирован, подозрений: {count}")
-
-        QMessageBox.warning(
-            self,
-            "Режим защиты активирован",
-            "РЕЖИМ ЗАЩИТЫ БУФЕРА ОБМЕНА АКТИВИРОВАН 🔒\n\n"
-            "Обнаружена подозрительная активность с буфером обмена.\n\n"
-            "Принятые меры:\n"
-            "• Буфер обмена немедленно очищен\n"
-            "• Таймаут авто-очистки установлен на 5 секунд\n"
-            "• Все новые копирования будут очищаться через 5 секунд\n\n"
-            "Будьте внимательны при копировании паролей!"
-        )
 
 
 def main():

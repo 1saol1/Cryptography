@@ -73,19 +73,18 @@ class ClipboardService:
     def copy_to_clipboard(self, data: str, data_type: str = "text",
                           source_entry_id: Optional[str] = None,
                           show_notification: bool = True) -> bool:
-        print(f"[CLIPBOARD] ===== НАЧАЛО КОПИРОВАНИЯ =====")
 
-        print(f"[CLIPBOARD] copy_to_clipboard вызван: type={data_type}, data={data[:20]}...")
 
         if self.state_manager.is_locked or not self.state_manager.logged_in:
-            print("[CLIPBOARD] ОШИБКА: хранилище заблокировано!")
+            print("ОШИБКА: хранилище заблокировано!")
             return False
 
         if not data:
-            print("[CLIPBOARD] ОШИБКА: пустые данные!")
+            print("ОШИБКА: пустые данные!")
             return False
 
         with self._timer_lock:
+            print("Очищаем старый буфер...")
             self._clear_clipboard_internal(reason="new_content")
 
             self._current_item = SecureClipboardItem(
@@ -94,15 +93,12 @@ class ClipboardService:
                 source_entry_id=source_entry_id
             )
 
-            print(f"[CLIPBOARD] Копируем в системный буфер через адаптер...")
             success = self.platform_adapter.copy_to_clipboard(data)
 
             if not success:
-                print("[CLIPBOARD] ОШИБКА: адаптер не смог скопировать!")
+                print("ОШИБКА: адаптер не смог скопировать!")
                 self._current_item = None
                 return False
-
-            print(f"[CLIPBOARD] УСПЕШНО скопировано!")
 
             self._start_timer()
 
@@ -112,7 +108,7 @@ class ClipboardService:
                 'timeout': self.timeout_seconds,
                 'timestamp': datetime.utcnow().isoformat()
             })
-            print(f"[CLIPBOARD] ===== КОПИРОВАНИЕ УСПЕШНО ЗАВЕРШЕНО =====")
+
             return True
 
     def _start_timer(self):
