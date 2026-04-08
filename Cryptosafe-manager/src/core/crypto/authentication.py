@@ -302,3 +302,6 @@ class AuthenticationService:
             "last_activity": self.last_activity,
             "failed_attempts": self.failed_attempts
         }
+
+    def verify_password(self, password: str) -> bool:
+        return self.login(password) is not None

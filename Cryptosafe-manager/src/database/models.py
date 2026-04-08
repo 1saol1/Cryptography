@@ -208,25 +208,32 @@ def update_settings(conn, settings_dict: dict) -> int:
 
 
 def reset_setting_to_default(conn, name: str) -> bool:
-    defaults = {
-        'password_min_length': '12',
-        'password_require_upper': 'true',
-        'password_require_lower': 'true',
-        'password_require_digit': 'true',
-        'password_require_special': 'true',
-        'argon2_time_cost': '3',
-        'argon2_memory_cost': '65536',
-        'argon2_parallelism': '4',
-        'pbkdf2_iterations': '600000',
-        'auto_lock_timeout': '60',
-        'session_timeout': '60',
-        'clipboard_clear_timeout': '30',
-        'theme': 'system',
-        'language': 'ru',
-        'trash_retention_days': '30',
-        'default_password_length': '16',
-        'password_exclude_ambiguous': 'true'
-    }
+    default_settings = [
+        ('password_min_length', '12', 'Минимальная длина пароля'),
+        ('password_require_upper', 'true', 'Требовать заглавные буквы'),
+        ('password_require_lower', 'true', 'Требовать строчные буквы'),
+        ('password_require_digit', 'true', 'Требовать цифры'),
+        ('password_require_special', 'true', 'Требовать спецсимволы'),
+        ('argon2_time_cost', '3', 'Количество итераций Argon2'),
+        ('argon2_memory_cost', '65536', 'Используемая память Argon2 (KB)'),
+        ('argon2_parallelism', '4', 'Количество потоков Argon2'),
+        ('pbkdf2_iterations', '600000', 'Количество итераций PBKDF2'),
+        ('auto_lock_timeout', '60', 'Таймаут авто-блокировки (минуты)'),
+        ('session_timeout', '60', 'Максимальное время сессии (минуты)'),
+        ('clipboard_clear_timeout', '30', 'Время очистки буфера обмена (секунды)'),
+        ('clipboard_security_level', 'standard', 'Уровень безопасности: standard/secure/paranoid'),
+        ('clipboard_monitor_enabled', 'true', 'Включить мониторинг буфера обмена'),
+        ('clipboard_monitor_interval', '1', 'Интервал проверки буфера (секунды)'),
+        ('clipboard_suspicious_threshold', '3', 'Порог подозрительных действий'),
+        ('clipboard_notifications_enabled', 'true', 'Показывать всплывающие уведомления'),
+        ('clipboard_warn_before_clear', '5', 'Предупреждение за N секунд до очистки'),
+        ('clipboard_whitelist', '[]', 'Белый список приложений (JSON)'),
+        ('theme', 'system', 'Тема оформления (system/light/dark)'),
+        ('language', 'ru', 'Язык интерфейса'),
+        ('trash_retention_days', '30', 'Сколько дней хранить удаленные записи'),
+        ('default_password_length', '16', 'Длина пароля по умолчанию'),
+        ('password_exclude_ambiguous', 'true', 'Исключать неоднозначные символы')
+    ]
 
     if name in defaults:
         return update_setting(conn, name, defaults[name])

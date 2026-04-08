@@ -2,6 +2,10 @@ import threading
 import time
 from typing import Optional
 from datetime import datetime
+import json
+import sys
+import os  # Добавлен импорт
+
 
 class ClipboardMonitor:
     def __init__(self, clipboard_service, event_bus, config_manager):
@@ -34,6 +38,74 @@ class ClipboardMonitor:
             self.check_interval = 1
             self.suspicious_threshold = 3
 
+    def _is_app_whitelisted(self, process_name: str = None) -> bool:
+        """
+        Проверяет, находится ли приложение в белом списке.
+
+        Args:
+            process_name: Имя процесса или путь к приложению (опционально)
+
+        Returns:
+            bool: True если приложение в белом списке
+        """
+        try:
+            # Загружаем белый список из настроек
+            whitelist_json = self.config.get('clipboard_whitelist', '[]')
+            whitelist = json.loads(whitelist_json)
+
+            if not whitelist:
+                return False
+
+            # Если не передан process_name, пробуем определить активное окно
+            if process_name is None:
+                try:
+                    import ctypes
+                    from ctypes import wintypes
+
+                    user32 = ctypes.windll.user32
+                    psapi = ctypes.windll.psapi
+                    kernel32 = ctypes.windll.kernel32
+
+                    # Получаем handle активного окна
+                    hwnd = user32.GetForegroundWindow()
+                    if not hwnd:
+                        return False
+
+                    # Получаем ID процесса
+                    pid = wintypes.DWORD()
+                    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+
+                    # Получаем путь к исполняемому файлу процесса
+                    handle = kernel32.OpenProcess(0x0400 | 0x0010, False, pid.value)
+                    if handle:
+                        exe_path = ctypes.create_unicode_buffer(260)
+                        psapi.GetModuleFileNameExW(handle, None, exe_path, 260)
+                        kernel32.CloseHandle(handle)
+                        process_name = exe_path.value.lower()
+                    else:
+                        return False
+
+                except Exception as e:
+                    print(f"[MONITOR] Ошибка определения процесса: {e}")
+                    return False
+
+            if not process_name:
+                return False
+
+            # Проверяем, есть ли приложение в белом списке
+            for whitelisted_path in whitelist:
+                whitelisted_lower = whitelisted_path.lower()
+                # Проверяем, содержится ли путь из белого списка в пути процесса
+                if whitelisted_lower in process_name or process_name in whitelisted_lower:
+                    print(f"[MONITOR] Приложение '{process_name}' в белом списке, пропускаем")
+                    return True
+
+            return False
+
+        except Exception as e:
+            print(f"[MONITOR] Ошибка проверки белого списка: {e}")
+            return False
+
     def start_monitoring(self):
         if not self.monitor_enabled:
             print("Мониторинг отключен в настройках")
@@ -47,7 +119,7 @@ class ClipboardMonitor:
         self._stop_event.clear()
         self._monitor_thread = threading.Thread(target=self._monitor_loop, daemon=True)
         self._monitor_thread.start()
-
+        print("[MONITOR] Мониторинг буфера обмена запущен")
 
     def stop_monitoring(self):
         if not self._monitoring:
@@ -58,14 +130,14 @@ class ClipboardMonitor:
 
         if self._monitor_thread:
             self._monitor_thread.join(timeout=2)
-
+        print("[MONITOR] Мониторинг буфера обмена остановлен")
 
     def _monitor_loop(self):
         while not self._stop_event.is_set():
             try:
                 self._check_clipboard()
             except Exception as e:
-                print(f"Ошибка при проверке")
+                print(f"Ошибка при проверке: {e}")
             time.sleep(self.check_interval)
 
     def _check_clipboard(self):
@@ -81,7 +153,7 @@ class ClipboardMonitor:
             if current_content != self._last_known_content:
                 our_data = self.clipboard.get_current_data_preview(reveal=True)
                 if our_data and current_content == our_data:
-                    print("Наше собственное копирование, игнорируем")
+                    print("[MONITOR] Наше собственное копирование, игнорируем")
                 else:
                     self._on_clipboard_read()
 
@@ -89,6 +161,12 @@ class ClipboardMonitor:
         self._last_check_time = datetime.utcnow()
 
     def _on_external_change(self, new_content: str):
+        # Проверяем белый список
+        if self._is_app_whitelisted():
+            print("[MONITOR] Приложение из белого списка - внешнее изменение игнорируется")
+            return
+
+        print("[MONITOR] Обнаружено внешнее изменение буфера обмена")
 
         current_timeout = self.clipboard.timeout_seconds
         accelerated_timeout = max(1, current_timeout // 2)
@@ -107,6 +185,12 @@ class ClipboardMonitor:
             self._enable_protection_mode()
 
     def _on_clipboard_read(self):
+        # Проверяем белый список
+        if self._is_app_whitelisted():
+            print("[MONITOR] Приложение из белого списка - чтение игнорируется")
+            return
+
+        print("[MONITOR] Обнаружено потенциальное чтение буфера обмена")
 
         self._suspicious_count += 1
 
@@ -120,6 +204,7 @@ class ClipboardMonitor:
             self._enable_protection_mode()
 
     def _enable_protection_mode(self):
+        print("[MONITOR] ВКЛЮЧЕН РЕЖИМ ЗАЩИТЫ БУФЕРА ОБМЕНА")
 
         self.clipboard.clear_clipboard(manual=False)
 
@@ -133,6 +218,7 @@ class ClipboardMonitor:
 
     def reset_suspicious_counter(self):
         self._suspicious_count = 0
+        print("[MONITOR] Счетчик подозрительной активности сброшен")
 
     def is_monitoring(self) -> bool:
         return self._monitoring

@@ -25,12 +25,14 @@ from src.core.crypto.key_manager import KeyManager
 from src.core.crypto.abstract import VaultEncryptionService
 from src.core.state_manager import StateManager
 from src.core.config import ConfigManager
+from src.gui.widgets.settings_dialog import SettingsDialog
 
 from src.core.clipboard.clipboard_service import ClipboardService
 from src.core.clipboard.clipboard_monitor import ClipboardMonitor
 from src.core.clipboard.clipboard_config import ClipboardSettings
 from src.core.events import (CLIPBOARD_SUSPICIOUS_ACCESS,
                              CLIPBOARD_PROTECTION_ENABLED)
+from src.gui.widgets.clipboard_preview import ClipboardPreviewWidget
 
 from src.core.vault.entry_manager import EntryManager
 from src.gui.widgets.entry_dialog import EntryDialog
@@ -118,9 +120,9 @@ class CryptoSafeApp(QMainWindow):
         self.db = Database(db_path)
         self.db.initialize()
 
-        self.config_manager = ConfigManager(db_path)
-
         self.key_manager = KeyManager()
+
+        self.config_manager = ConfigManager(db_path, self.key_manager)
 
         encryption_key = self.state.get_key()
         if encryption_key:
@@ -153,7 +155,6 @@ class CryptoSafeApp(QMainWindow):
         self.timer.start(60000)
 
         self.clipboard_settings = ClipboardSettings(self.config_manager)
-
         self.clipboard_settings.add_default_settings()
 
         self.clipboard_service = ClipboardService(
@@ -572,13 +573,6 @@ class CryptoSafeApp(QMainWindow):
         change_password_action.triggered.connect(self.open_change_password)
         toolbar.addAction(change_password_action)
 
-        toolbar.addSeparator()
-
-        clear_clipboard_btn = QPushButton("🗑️ Очистить буфер")
-        clear_clipboard_btn.setToolTip("Очистить буфер обмена")
-        clear_clipboard_btn.clicked.connect(self.manual_clear_clipboard)
-        toolbar.addWidget(clear_clipboard_btn)
-
     def create_main_table(self):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -595,6 +589,9 @@ class CryptoSafeApp(QMainWindow):
     def create_status_bar(self):
         self.status_bar = QStatusBar()
         self.setStatusBar(self.status_bar)
+
+        self.clipboard_preview = ClipboardPreviewWidget(self)
+        self.status_bar.addPermanentWidget(self.clipboard_preview)
 
         session_info = self.state.get_session_info()
         if session_info['login_time']:
@@ -878,8 +875,16 @@ class CryptoSafeApp(QMainWindow):
         viewer.exec()
 
     def open_settings(self):
-        dialog = SettingsDialog(self)
-        dialog.exec()
+        db_path = os.path.join(BASE_DIR, "src", "database", "cryptosafe.db")
+        dialog = SettingsDialog(self, db_path=db_path)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            # Перезагружаем настройки буфера обмена
+            if hasattr(self, 'clipboard_settings'):
+                self.clipboard_settings.reload()
+            if hasattr(self, 'clipboard_service'):
+                self.clipboard_service.reload_settings()
+            self.status_bar.showMessage("Настройки применены", 3000)
 
     def show_about(self):
         QMessageBox.information(

@@ -2,16 +2,21 @@ import secrets
 from datetime import datetime
 from typing import Optional
 
+from src.core.crypto.secure_memory import SecureMemory
+
 
 class SecureClipboardItem:
+
     def __init__(self, data: str, data_type: str, source_entry_id: Optional[str] = None):
         self.data_type = data_type
         self.source_entry_id = source_entry_id
         self.copied_at = datetime.utcnow()
 
+        self._secure_memory = SecureMemory()
         self._mask = secrets.token_bytes(32)
 
-        self._obfuscated_data = self._obfuscate(data)
+        obfuscated = self._obfuscate(data)
+        self._obfuscated_data = self._secure_memory.secure_store(obfuscated)
 
     def _obfuscate(self, data: str) -> bytes:
         data_bytes = data.encode('utf-8')
@@ -36,7 +41,8 @@ class SecureClipboardItem:
 
     def secure_wipe(self):
         if hasattr(self, '_obfuscated_data'):
-            self._obfuscated_data = bytes(len(self._obfuscated_data))
+            self._secure_memory.secure_clear(self._obfuscated_data)
+            self._obfuscated_data = None
 
         if hasattr(self, '_mask'):
             self._mask = bytes(len(self._mask))

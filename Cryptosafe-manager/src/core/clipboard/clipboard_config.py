@@ -8,13 +8,14 @@ class SecurityLevel(Enum):
 
 
 class ClipboardSettings:
-    KEY_TIMEOUT = "clipboard_timeout"
+    KEY_TIMEOUT = "clipboard_clear_timeout"
     KEY_SECURITY_LEVEL = "clipboard_security_level"
     KEY_MONITOR_ENABLED = "clipboard_monitor_enabled"
     KEY_MONITOR_INTERVAL = "clipboard_monitor_interval"
     KEY_SUSPICIOUS_THRESHOLD = "clipboard_suspicious_threshold"
     KEY_NOTIFICATIONS_ENABLED = "clipboard_notifications_enabled"
     KEY_WARN_BEFORE_CLEAR = "clipboard_warn_before_clear"
+    KEY_WHITELIST = "clipboard_whitelist"
 
     DEFAULT_TIMEOUT = 30
     DEFAULT_SECURITY_LEVEL = SecurityLevel.STANDARD.value
@@ -28,40 +29,7 @@ class ClipboardSettings:
 
     def __init__(self, config_manager):
         self.config = config_manager
-        self._ensure_table_structure()
         self._load_all()
-
-    def _ensure_table_structure(self):
-        try:
-            conn = self.config._get_connection()
-
-            cursor = conn.execute("PRAGMA table_info(settings)")
-            columns = [col[1] for col in cursor.fetchall()]
-
-            if 'setting_value' not in columns and 'value' in columns:
-                try:
-                    conn.execute("ALTER TABLE settings RENAME COLUMN value TO setting_value")
-                    print("[ClipboardSettings] Переименована колонка value -> setting_value")
-                except:
-                    pass
-            elif 'setting_value' not in columns:
-                try:
-                    conn.execute("ALTER TABLE settings ADD COLUMN setting_value TEXT")
-                    print("[ClipboardSettings] Добавлена колонка setting_value")
-                except:
-                    pass
-
-            if 'encrypted' not in columns:
-                try:
-                    conn.execute("ALTER TABLE settings ADD COLUMN encrypted INTEGER DEFAULT 0")
-                    print("[ClipboardSettings] Добавлена колонка encrypted")
-                except:
-                    pass
-
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            print(f"[ClipboardSettings] Ошибка проверки таблицы: {e}")
 
     def _load_all(self):
         timeout_str = self.config.get(self.KEY_TIMEOUT, str(self.DEFAULT_TIMEOUT))
@@ -126,44 +94,46 @@ class ClipboardSettings:
             (self.KEY_SUSPICIOUS_THRESHOLD, str(self.DEFAULT_SUSPICIOUS_THRESHOLD)),
             (self.KEY_NOTIFICATIONS_ENABLED, str(self.DEFAULT_NOTIFICATIONS_ENABLED).lower()),
             (self.KEY_WARN_BEFORE_CLEAR, str(self.DEFAULT_WARN_BEFORE_CLEAR)),
+            (self.KEY_WHITELIST, '[]'),
         ]
 
         for key, value in default_settings:
             existing = self.config.get(key)
             if existing is None:
-                self.config.set(key, value)
-                print(f"[ClipboardSettings] Добавлена настройка {key} = {value}")
+                encrypted = (key == self.KEY_WHITELIST)
+                self.config.set(key, value, encrypted=encrypted)
 
-    def get_preset_profile(self, profile_name: str) -> dict:
-        profiles = {
-            "standard": {
-                "timeout": 30,
-                "monitor_enabled": True,
-                "notifications_enabled": True,
-                "warn_before_clear": 5,
-                "description": "Стандартный режим"
-            },
-            "secure": {
-                "timeout": 15,
-                "monitor_enabled": True,
-                "notifications_enabled": True,
-                "warn_before_clear": 3,
-                "description": "Усиленная безопасность"
-            },
-            "public_computer": {
-                "timeout": 5,
-                "monitor_enabled": True,
-                "notifications_enabled": True,
-                "warn_before_clear": 1,
-                "description": "Общедоступный компьютер"
-            }
-        }
-        return profiles.get(profile_name, profiles["standard"])
+    def reload(self):
+        self._load_all()
 
-    def apply_profile(self, profile_name: str):
-        profile = self.get_preset_profile(profile_name)
-        self.timeout = profile["timeout"]
-        self.monitor_enabled = profile["monitor_enabled"]
-        self.notifications_enabled = profile["notifications_enabled"]
-        self.warn_before_clear = profile["warn_before_clear"]
-        self.save()
+    def get_whitelist(self) -> list:
+        import json
+        whitelist_json = self.config.get(self.KEY_WHITELIST, '[]')
+        try:
+            return json.loads(whitelist_json)
+        except:
+            return []
+
+    def save_whitelist(self, whitelist: list):
+        import json
+        self.config.set(self.KEY_WHITELIST, json.dumps(whitelist, ensure_ascii=False), encrypted=True)
+
+    def is_whitelisted(self, process_path: str = None) -> bool:
+        if not process_path:
+            return False
+
+        whitelist = self.get_whitelist()
+        if not whitelist:
+            return False
+
+        process_path_lower = process_path.lower()
+        import os
+
+        for whitelisted_path in whitelist:
+            whitelisted_lower = whitelisted_path.lower()
+            if whitelisted_lower == process_path_lower:
+                return True
+            if os.path.basename(whitelisted_lower) == os.path.basename(process_path_lower):
+                return True
+
+        return False

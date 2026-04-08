@@ -1,16 +1,17 @@
 import threading
-from datetime import datetime, timedelta
-from typing import Optional, Callable
+from datetime import datetime
+from typing import Optional
 
 from src.core.clipboard.platform_adapter import get_platform_adapter, ClipboardAdapter
 from src.core.clipboard.secure_item import SecureClipboardItem
 
 
 class ClipboardService:
-    def __init__(self, event_bus, state_manager, config_manager):
+    def __init__(self, event_bus, state_manager, config_manager, clipboard_settings=None):
         self.events = event_bus
         self.state_manager = state_manager
         self.config = config_manager
+        self.clipboard_settings = clipboard_settings
 
         self.platform_adapter: ClipboardAdapter = get_platform_adapter()
 
@@ -19,15 +20,22 @@ class ClipboardService:
         self._timer: Optional[threading.Timer] = None
         self._timer_lock = threading.RLock()
 
+        self.timeout_seconds = 30
+        self.security_level = "standard"
+
         self._load_settings()
 
         self.events.subscribe("UserLoggedOut", self._on_user_logged_out)
         self.events.subscribe("UserLoggedIn", self._on_user_logged_in)
 
-
     def _load_settings(self):
         try:
-            timeout_str = self.config.get("clipboard_timeout", "30")
+            if self.clipboard_settings:
+                self.timeout_seconds = self.clipboard_settings.timeout
+                self.security_level = self.clipboard_settings.security_level
+                return
+
+            timeout_str = self.config.get("clipboard_clear_timeout", "30")
             self.timeout_seconds = int(timeout_str)
 
             if self.timeout_seconds != 0:
@@ -40,22 +48,16 @@ class ClipboardService:
             self.timeout_seconds = 30
             self.security_level = "standard"
 
-    def _save_settings(self):
-        try:
-            self.config.set("clipboard_timeout", str(self.timeout_seconds))
-            self.config.set("clipboard_security_level", self.security_level)
-        except Exception as e:
-            print(f"Ошибка сохранения настроек: {e}")
-
     def set_timeout(self, seconds: int):
         if seconds == 0:
             self.timeout_seconds = 0
-            self._save_settings()
-            return
+        else:
+            seconds = max(5, min(300, seconds))
+            self.timeout_seconds = seconds
 
-        seconds = max(5, min(300, seconds))
-        self.timeout_seconds = seconds
-        self._save_settings()
+        if self.clipboard_settings:
+            self.clipboard_settings.timeout = self.timeout_seconds
+            self.clipboard_settings.save()
 
     def set_security_level(self, level: str):
         if level == "standard":
@@ -68,23 +70,18 @@ class ClipboardService:
             return
 
         self.security_level = level
-        self._save_settings()
 
     def copy_to_clipboard(self, data: str, data_type: str = "text",
                           source_entry_id: Optional[str] = None,
                           show_notification: bool = True) -> bool:
 
-
         if self.state_manager.is_locked or not self.state_manager.logged_in:
-            print("ОШИБКА: хранилище заблокировано!")
             return False
 
         if not data:
-            print("ОШИБКА: пустые данные!")
             return False
 
         with self._timer_lock:
-            print("Очищаем старый буфер...")
             self._clear_clipboard_internal(reason="new_content")
 
             self._current_item = SecureClipboardItem(
@@ -96,7 +93,6 @@ class ClipboardService:
             success = self.platform_adapter.copy_to_clipboard(data)
 
             if not success:
-                print("ОШИБКА: адаптер не смог скопировать!")
                 self._current_item = None
                 return False
 
@@ -113,7 +109,6 @@ class ClipboardService:
 
     def _start_timer(self):
         if self.timeout_seconds == 0:
-            print("Авто-очистка отключена")
             return
 
         if self._timer:
@@ -179,7 +174,7 @@ class ClipboardService:
                     'has_content': True,
                     'data_type': self._current_item.data_type,
                     'source_entry_id': self._current_item.source_entry_id,
-                    'remaining_seconds': -1,  # -1 означает "никогда не очистится"
+                    'remaining_seconds': -1,
                     'timeout_configured': 0,
                     'auto_clear_disabled': True
                 }
@@ -226,3 +221,9 @@ class ClipboardService:
     def shutdown(self):
         with self._timer_lock:
             self._clear_clipboard_internal(reason="shutdown")
+
+    def reload_settings(self):
+        self._load_settings()
+
+    def set_clipboard_settings(self, clipboard_settings):
+        self.clipboard_settings = clipboard_settings
