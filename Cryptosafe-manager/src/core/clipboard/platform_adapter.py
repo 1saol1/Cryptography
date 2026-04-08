@@ -1,6 +1,28 @@
 from abc import ABC, abstractmethod
 import platform
 from typing import Optional
+import subprocess
+import shutil
+import time
+import pyperclip
+
+try:
+    import win32clipboard
+    import win32con
+    WIN32_AVAILABLE = True
+except ImportError:
+    WIN32_AVAILABLE = False
+    win32clipboard = None
+    win32con = None
+
+try:
+    from Foundation import NSPasteboard
+    from AppKit import NSPasteboardTypeString
+    MACOS_AVAILABLE = True
+except ImportError:
+    MACOS_AVAILABLE = False
+    NSPasteboard = None
+    NSPasteboardTypeString = None
 
 
 class ClipboardAdapter(ABC):
@@ -20,39 +42,30 @@ class ClipboardAdapter(ABC):
 
 class WindowsClipboardAdapter(ClipboardAdapter):
     def __init__(self):
-        try:
-            import win32clipboard
-            import win32con
-            self.win32clipboard = win32clipboard
-            self.win32con = win32con
-            self._available = True
-        except ImportError as e:
-            self._available = False
-            print(f"Ошибка импорта: {e}")
+        self._available = WIN32_AVAILABLE
+        if not self._available:
+            print("Ошибка импорта: win32clipboard не установлен")
 
     def copy_to_clipboard(self, data: str) -> bool:
-
         if not self._available:
             print("Адаптер не доступен")
             return False
 
         for attempt in range(3):
             try:
-                self.win32clipboard.OpenClipboard()
-                self.win32clipboard.EmptyClipboard()
-                self.win32clipboard.SetClipboardData(self.win32con.CF_UNICODETEXT, data)
-                self.win32clipboard.CloseClipboard()
+                win32clipboard.OpenClipboard()
+                win32clipboard.EmptyClipboard()
+                win32clipboard.SetClipboardData(win32con.CF_UNICODETEXT, data)
+                win32clipboard.CloseClipboard()
                 return True
             except Exception as e:
                 print(f"Попытка {attempt + 1} ошибка: {e}")
                 try:
-                    self.win32clipboard.CloseClipboard()
+                    win32clipboard.CloseClipboard()
                 except:
                     pass
-                import time
                 time.sleep(0.1)
         try:
-            import pyperclip
             pyperclip.copy(data)
             return True
         except:
@@ -62,14 +75,14 @@ class WindowsClipboardAdapter(ClipboardAdapter):
         if not self._available:
             return False
         try:
-            self.win32clipboard.OpenClipboard()
-            self.win32clipboard.EmptyClipboard()
-            self.win32clipboard.CloseClipboard()
+            win32clipboard.OpenClipboard()
+            win32clipboard.EmptyClipboard()
+            win32clipboard.CloseClipboard()
             return True
         except Exception as e:
             print(f"Windows clear error: {e}")
             try:
-                self.win32clipboard.CloseClipboard()
+                win32clipboard.CloseClipboard()
             except:
                 pass
             return False
@@ -79,162 +92,248 @@ class WindowsClipboardAdapter(ClipboardAdapter):
             return None
 
         try:
-            self.win32clipboard.OpenClipboard()
+            win32clipboard.OpenClipboard()
 
-            if self.win32clipboard.IsClipboardFormatAvailable(self.win32con.CF_UNICODETEXT):
-                handle = self.win32clipboard.GetClipboardData(self.win32con.CF_UNICODETEXT)
+            if win32clipboard.IsClipboardFormatAvailable(win32con.CF_UNICODETEXT):
+                handle = win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT)
                 if handle:
                     data = handle
-                    self.win32clipboard.CloseClipboard()
+                    win32clipboard.CloseClipboard()
                     return str(data) if data else None
-            self.win32clipboard.CloseClipboard()
+            win32clipboard.CloseClipboard()
             return None
         except Exception as e:
             print(f"Windows get error: {e}")
             try:
-                self.win32clipboard.CloseClipboard()
+                win32clipboard.CloseClipboard()
             except:
                 pass
             return None
 
 
 class MacOSClipboardAdapter(ClipboardAdapter):
-
     def __init__(self):
-        try:
-            from Foundation import NSPasteboard
-            from AppKit import NSPasteboardTypeString
-            self.NSPasteboard = NSPasteboard
-            self.NSPasteboardTypeString = NSPasteboardTypeString
-            self._available = True
-        except ImportError:
-            self._available = False
+        self._available = MACOS_AVAILABLE
+        if not self._available:
             print("pyobjc не установлен")
 
-    def copy_to_clipboard(self, data: str) -> bool:
+    def copy_to_clipboard(self, data: str, use_private: bool = False) -> bool:
         if not self._available:
-            print("Адаптер не доступен")
             return False
 
         try:
-            pb = self.NSPasteboard.generalPasteboard()
-            pb.declareTypes_owner_([self.NSPasteboardTypeString], None)
-            pb.setString_forType_(data, self.NSPasteboardTypeString)
+            if use_private:
+                pb = NSPasteboard.pasteboardWithName_("Apple CFPasteboard drag")
+            else:
+                pb = NSPasteboard.generalPasteboard()
+
+            pb.declareTypes_owner_([NSPasteboardTypeString], None)
+            pb.setString_forType_(data, NSPasteboardTypeString)
             return True
         except Exception as e:
             print(f"macOS copy error: {e}")
             return False
 
-    def clear_clipboard(self) -> bool:
-        if not self._available:
-            return False
+    def clear_clipboard(self, clear_private: bool = False) -> bool:
+        success = False
 
         try:
-            pb = self.NSPasteboard.generalPasteboard()
+            pb = NSPasteboard.generalPasteboard()
             pb.clearContents()
-            return True
-        except Exception as e:
-            print(f"MacOS clear error: {e}")
-            return False
+            success = True
+        except:
+            pass
 
-    def get_clipboard_content(self) -> Optional[str]:
+        if clear_private:
+            try:
+                pb = NSPasteboard.pasteboardWithName_("Apple CFPasteboard drag")
+                pb.clearContents()
+            except:
+                pass
+
+        return success
+
+    def get_clipboard_content(self, from_private: bool = False) -> Optional[str]:
         if not self._available:
             return None
 
         try:
-            pb = self.NSPasteboard.generalPasteboard()
-            return pb.stringForType_(self.NSPasteboardTypeString)
+            if from_private:
+                pb = NSPasteboard.pasteboardWithName_("Apple CFPasteboard drag")
+            else:
+                pb = NSPasteboard.generalPasteboard()
+
+            return pb.stringForType_(NSPasteboardTypeString)
         except Exception as e:
             print(f"MacOS get error: {e}")
             return None
 
 
 class LinuxClipboardAdapter(ClipboardAdapter):
-
     def __init__(self):
-        try:
-            import pyperclip
-            self.pyperclip = pyperclip
-            self._available = True
-        except ImportError:
-            self._available = False
-            print("Pyperclip не установлен")
+        self._available = True
+        self._wayland_available = False
+        self._xclip_available = False
+        self._xsel_available = False
 
-    def copy_to_clipboard(self, data: str) -> bool:
-        print(f"[ADAPTER] Linux copy_to_clipboard вызван, data={data[:20]}...")
-        if not self._available:
-            print("[ADAPTER] Адаптер не доступен")
+        self._check_backends()
+
+    def _check_backends(self):
+        if shutil.which('wl-copy') and shutil.which('wl-paste'):
+            self._wayland_available = True
+            print("[LinuxAdapter] Wayland (wl-clipboard) доступен")
+
+        if shutil.which('xclip'):
+            self._xclip_available = True
+            print("[LinuxAdapter] xclip доступен")
+
+        if shutil.which('xsel'):
+            self._xsel_available = True
+            print("[LinuxAdapter] xsel доступен")
+
+    def _copy_with_wayland(self, data: str, primary: bool = False) -> bool:
+        try:
+            if primary:
+                proc = subprocess.Popen(['wl-copy', '--primary'], stdin=subprocess.PIPE)
+            else:
+                proc = subprocess.Popen(['wl-copy'], stdin=subprocess.PIPE)
+            proc.communicate(data.encode())
+            return proc.returncode == 0
+        except Exception as e:
+            print(f"[LinuxAdapter] Wayland copy error: {e}")
             return False
 
+    def _copy_with_xclip(self, data: str, primary: bool = False) -> bool:
         try:
-            self.pyperclip.copy(data)
+            if primary:
+                proc = subprocess.Popen(['xclip', '-selection', 'primary', '-i'], stdin=subprocess.PIPE)
+            else:
+                proc = subprocess.Popen(['xclip', '-selection', 'clipboard', '-i'], stdin=subprocess.PIPE)
+            proc.communicate(data.encode())
+            return proc.returncode == 0
+        except Exception as e:
+            print(f"[LinuxAdapter] xclip copy error: {e}")
+            return False
+
+    def _copy_with_xsel(self, data: str, primary: bool = False) -> bool:
+        try:
+            if primary:
+                proc = subprocess.Popen(['xsel', '--primary', '-i'], stdin=subprocess.PIPE)
+            else:
+                proc = subprocess.Popen(['xsel', '--clipboard', '-i'], stdin=subprocess.PIPE)
+            proc.communicate(data.encode())
+            return proc.returncode == 0
+        except Exception as e:
+            print(f"[LinuxAdapter] xsel copy error: {e}")
+            return False
+
+    def copy_to_clipboard(self, data: str, use_primary: bool = False) -> bool:
+        if not data:
+            return False
+
+        if self._wayland_available:
+            if self._copy_with_wayland(data, use_primary):
+                print(f"[LinuxAdapter] Wayland: copied to {'PRIMARY' if use_primary else 'CLIPBOARD'}")
+                return True
+
+        if self._xclip_available:
+            if self._copy_with_xclip(data, use_primary):
+                print(f"[LinuxAdapter] xclip: copied to {'PRIMARY' if use_primary else 'CLIPBOARD'}")
+                return True
+
+        if self._xsel_available:
+            if self._copy_with_xsel(data, use_primary):
+                print(f"[LinuxAdapter] xsel: copied to {'PRIMARY' if use_primary else 'CLIPBOARD'}")
+                return True
+
+        try:
+            pyperclip.copy(data)
+            print(f"[LinuxAdapter] pyperclip fallback: copied to CLIPBOARD")
             return True
         except Exception as e:
-            print(f"Linux copy error: {e}")
+            print(f"[LinuxAdapter] All backends failed: {e}")
             return False
 
-    def clear_clipboard(self) -> bool:
-        if not self._available:
-            return False
+    def clear_clipboard(self, clear_primary: bool = True) -> bool:
+        success = False
 
-        try:
-            self.pyperclip.copy("")
-            return True
-        except Exception as e:
-            print(f"Linux clear error: {e}")
-            return False
+        if self.copy_to_clipboard("", use_primary=False):
+            success = True
 
-    def get_clipboard_content(self) -> Optional[str]:
-        if not self._available:
-            return None
+        if clear_primary and self.copy_to_clipboard("", use_primary=True):
+            success = True
 
-        try:
-            return self.pyperclip.paste()
-        except Exception as e:
-            print(f"Linux get error: {e}")
-            return None
+        return success
+
+    def get_clipboard_content(self, from_primary: bool = False) -> Optional[str]:
+        if self._wayland_available:
+            try:
+                if from_primary:
+                    proc = subprocess.Popen(['wl-paste', '--primary'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                else:
+                    proc = subprocess.Popen(['wl-paste'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                stdout, _ = proc.communicate()
+                if proc.returncode == 0 and stdout:
+                    return stdout.decode()
+            except:
+                pass
+
+        if self._xclip_available:
+            try:
+                if from_primary:
+                    proc = subprocess.Popen(['xclip', '-selection', 'primary', '-o'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                else:
+                    proc = subprocess.Popen(['xclip', '-selection', 'clipboard', '-o'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                stdout, _ = proc.communicate()
+                if proc.returncode == 0 and stdout:
+                    return stdout.decode()
+            except:
+                pass
+
+        if self._xsel_available:
+            try:
+                if from_primary:
+                    proc = subprocess.Popen(['xsel', '--primary', '-o'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                else:
+                    proc = subprocess.Popen(['xsel', '--clipboard', '-o'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                stdout, _ = proc.communicate()
+                if proc.returncode == 0 and stdout:
+                    return stdout.decode()
+            except:
+                pass
+
+        if not from_primary:
+            try:
+                return pyperclip.paste()
+            except:
+                pass
+
+        return None
 
 
 class FallbackClipboardAdapter(ClipboardAdapter):
-
     def __init__(self):
-        try:
-            import pyperclip
-            self.pyperclip = pyperclip
-            self._available = True
-        except ImportError:
-            self._available = False
-            print("Pyperclip не установлен, базовая функциональность недоступна")
+        self._available = True
 
     def copy_to_clipboard(self, data: str) -> bool:
-        if not self._available:
-            print("Нет доступного адаптера для копирования")
-            return False
-
         try:
-            self.pyperclip.copy(data)
+            pyperclip.copy(data)
             return True
         except Exception as e:
             print(f"Fallback copy error: {e}")
             return False
 
     def clear_clipboard(self) -> bool:
-        if not self._available:
-            return False
-
         try:
-            self.pyperclip.copy("")
+            pyperclip.copy("")
             return True
         except Exception as e:
             print(f"Fallback clear error: {e}")
             return False
 
     def get_clipboard_content(self) -> Optional[str]:
-        if not self._available:
-            return None
-
         try:
-            return self.pyperclip.paste()
+            return pyperclip.paste()
         except Exception as e:
             print(f"Fallback get error: {e}")
             return None
