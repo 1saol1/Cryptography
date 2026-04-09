@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLineEdit,
                              QTextEdit, QPushButton, QHBoxLayout, QLabel,
-                             QMessageBox, QComboBox)
+                             QMessageBox, QComboBox, QCheckBox)
 
 from .password_entry import PasswordEntry
 from .password_generator_dialog import PasswordGeneratorDialog
@@ -75,6 +75,11 @@ class EntryDialog(QDialog):
         self.tags_input.setPlaceholderText("тег1, тег2, тег3")
         form_layout.addRow("Теги:", self.tags_input)
 
+        self.allow_copy_checkbox = QCheckBox("Разрешить копирование пароля в буфер обмена")
+        self.allow_copy_checkbox.setChecked(True)
+        self.allow_copy_checkbox.setToolTip("Если отключено, пароль этой записи нельзя будет скопировать")
+        form_layout.addRow("", self.allow_copy_checkbox)
+
         layout.addLayout(form_layout)
 
         buttons_layout = QHBoxLayout()
@@ -114,6 +119,9 @@ class EntryDialog(QDialog):
             self.tags_input.setText(tags)
 
         self._check_password_strength()
+
+        allow_copy = data.get('allow_copy', 1)
+        self.allow_copy_checkbox.setChecked(allow_copy == 1)
 
     def _generate_password_simple(self):
         password = self.entry_manager.generate_password()
@@ -232,12 +240,14 @@ class EntryDialog(QDialog):
         else:
             tags = []
 
-        return {
+        result = {
             'title': self.title_input.text().strip(),
             'username': self.username_input.text().strip(),
             'password': self.password_input.get(),
             'url': self.url_input.text().strip(),
             'notes': self.notes_input.toPlainText().strip(),
             'category': self.category_input.currentText(),
-            'tags': tags
+            'tags': tags,
+            'allow_copy': self.allow_copy_checkbox.isChecked()
         }
+        return result

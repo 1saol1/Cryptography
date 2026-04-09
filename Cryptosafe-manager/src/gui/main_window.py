@@ -318,17 +318,42 @@ class CryptoSafeApp(QMainWindow):
         print("[APP] Окно восстановлено, данные загружены")
 
     def _on_tray_icon_activated(self, reason):
-        """Обработчик клика по иконке в трее"""
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             self.show_normal()
 
     def copy_to_clipboard(self, text: str, data_type: str = "text", entry_id: str = None):
         if not self.state.is_active():
+            # ДОБАВЬТЕ ЭТОТ БЛОК
+            self.event_bus.publish("ClipboardCopyBlocked", {
+                'reason': 'session_inactive',
+                'entry_id': entry_id,
+                'data_type': data_type
+            })
             QMessageBox.warning(self, "Доступ запрещен", "Хранилище заблокировано. Выполните вход.")
             return False
 
         if not text:
             return False
+
+        if data_type == "password" and entry_id:
+            try:
+                allow_copy = self.entry_manager.get_allow_copy(entry_id)
+                if not allow_copy:
+                    # ДОБАВЬТЕ ЭТОТ БЛОК
+                    self.event_bus.publish("ClipboardCopyBlocked", {
+                        'reason': 'allow_copy_disabled',
+                        'entry_id': entry_id,
+                        'data_type': data_type
+                    })
+                    entry = self.entry_manager.get_entry(entry_id)
+                    QMessageBox.warning(
+                        self,
+                        "Копирование запрещено",
+                        f"Копирование пароля для '{entry.get('title', 'записи')}' запрещено настройками записи."
+                    )
+                    return False
+            except Exception as e:
+                print(f"Ошибка проверки разрешений: {e}")
 
         success = self.clipboard_service.copy_to_clipboard(
             data=text,
@@ -350,7 +375,6 @@ class CryptoSafeApp(QMainWindow):
             print("[APP] Сервис буфера не доступен")
 
     def changeEvent(self, event):
-        """Обрабатываем минимизацию окна (кнопка сворачивания)"""
         if event.type() == QEvent.Type.WindowStateChange:
             if self.windowState() & Qt.WindowState.WindowMinimized:
                 print("[APP] Окно минимизировано — очищаем только данные таблицы (ключи сохранены)")
@@ -975,6 +999,35 @@ class CryptoSafeApp(QMainWindow):
         if data:
             count = data.get('suspicious_count', 0)
             print(f"[APP] Режим защиты активирован, подозрений: {count}")
+
+    def copy_password_with_check(self, password: str, entry_id: str):
+
+        if not self.state.is_active():
+            QMessageBox.warning(self, "Доступ запрещен", "Хранилище заблокировано.")
+            return
+
+        try:
+            allow_copy = self.entry_manager.get_allow_copy(entry_id)
+            if not allow_copy:
+                entry = self.entry_manager.get_entry(entry_id)
+                QMessageBox.warning(
+                    self,
+                    "Копирование запрещено",
+                    f"Копирование пароля для '{entry.get('title', 'записи')}' запрещено настройками записи."
+                )
+                return
+        except Exception as e:
+            print(f"Ошибка проверки разрешений: {e}")
+
+        success = self.clipboard_service.copy_to_clipboard(
+            data=password,
+            data_type="password",
+            source_entry_id=entry_id
+        )
+
+        if success:
+            self.status_bar.showMessage("Пароль скопирован в буфер", 2000)
+            self.state.update_activity()
 
 
 def main():

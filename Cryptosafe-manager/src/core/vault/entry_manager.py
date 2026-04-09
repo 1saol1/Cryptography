@@ -66,13 +66,18 @@ class EntryManager:
         totp_secret = data.get('totp_secret', '')
         share_metadata = data.get('share_metadata', '')
 
+        # ДОБАВЬТЕ ЭТУ СТРОКУ - получаем значение allow_copy (по умолчанию True)
+        allow_copy = 1 if data.get('allow_copy', True) else 0
+        print(f"DEBUG: create_entry allow_copy = {allow_copy}")  # ВРЕМЕННЫЙ PRINT
+
         try:
+            # ИЗМЕНИТЕ INSERT запрос - добавьте allow_copy
             self.db.execute(
                 """INSERT INTO vault_entries 
-                   (id, encrypted_data, created_at, updated_at, tags, totp_secret, share_metadata) 
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                   (id, encrypted_data, created_at, updated_at, tags, totp_secret, share_metadata, allow_copy) 
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
                 (entry_id, encrypted_blob, datetime.now(), datetime.now(),
-                 tags_json, totp_secret, share_metadata)
+                 tags_json, totp_secret, share_metadata, allow_copy)
             )
 
             if hasattr(self.db, 'commit'):
@@ -87,7 +92,7 @@ class EntryManager:
             return entry_id
 
         except Exception as e:
-            print(f"Ошибка создания записи")
+            print(f"Ошибка создания записи: {e}")
             if hasattr(self.db, 'rollback'):
                 self.db.rollback()
             raise
@@ -180,16 +185,22 @@ class EntryManager:
         else:
             tags_json = '[]'
 
+        # ДОБАВЬТЕ ЭТУ СТРОКУ - получаем значение allow_copy
+        allow_copy = 1 if new_data.get('allow_copy', updated_data.get('allow_copy', True)) else 0
+        print(f"DEBUG: update_entry allow_copy = {allow_copy}")  # ВРЕМЕННЫЙ PRINT
+
         try:
+            # ИЗМЕНИТЕ UPDATE запрос - добавьте allow_copy
             self.db.execute(
                 """UPDATE vault_entries 
                    SET encrypted_data = ?, 
                        updated_at = ?, 
                        tags = ?, 
                        totp_secret = ?, 
-                       share_metadata = ? 
+                       share_metadata = ?,
+                       allow_copy = ?
                    WHERE id = ?""",
-                (encrypted_blob, datetime.now(), tags_json, totp_secret, share_metadata, entry_id)
+                (encrypted_blob, datetime.now(), tags_json, totp_secret, share_metadata, allow_copy, entry_id)
             )
 
             if hasattr(self.db, 'commit'):
@@ -205,11 +216,7 @@ class EntryManager:
             return updated_data
 
         except Exception as e:
-            if hasattr(self.db, 'rollback'):
-                self.db.rollback()
-            raise
-
-        except Exception as e:
+            print(f"Ошибка обновления записи: {e}")
             if hasattr(self.db, 'rollback'):
                 self.db.rollback()
             raise
@@ -435,3 +442,47 @@ class EntryManager:
 
     def is_session_active(self) -> bool:
         return self.key_manager.get_cached_key() is not None
+
+    def get_entry_for_copy(self, entry_id: str) -> dict:
+        entry = self.get_entry(entry_id)
+
+        cursor = self.db.execute(
+            "SELECT allow_copy FROM vault_entries WHERE id = ? AND deleted_at IS NULL",
+            (entry_id,)
+        )
+        row = cursor.fetchone()
+
+        allow_copy = row[0] if row and row[0] is not None else 1
+
+        if allow_copy == 0:
+            raise ValueError(f"Копирование пароля для '{entry.get('title', 'записи')}' запрещено")
+
+        return entry
+
+    def set_allow_copy(self, entry_id: str, allow: bool) -> bool:
+
+        self.db.execute("""
+            UPDATE vault_entries 
+            SET allow_copy = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+        """, (1 if allow else 0, entry_id))
+
+        if hasattr(self.db, 'commit'):
+            self.db.commit()
+
+        if self.event_system:
+            self.event_system.publish('EntryUpdated', {
+                'entry_id': entry_id,
+                'allow_copy': allow
+            })
+
+        return True
+
+    def get_allow_copy(self, entry_id: str) -> bool:
+        cursor = self.db.execute(
+            "SELECT allow_copy FROM vault_entries WHERE id = ? AND deleted_at IS NULL",
+            (entry_id,)
+        )
+        row = cursor.fetchone()
+        result = row[0] == 1 if row else True
+        return result

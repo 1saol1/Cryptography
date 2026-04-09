@@ -76,9 +76,21 @@ class ClipboardService:
                           show_notification: bool = True) -> bool:
 
         if self.state_manager.is_locked or not self.state_manager.logged_in:
+            self.events.publish("ClipboardCopyBlocked", {
+                'reason': 'vault_locked',
+                'entry_id': source_entry_id,
+                'data_type': data_type,
+                'timestamp': datetime.utcnow().isoformat()
+            })
             return False
 
         if not data:
+            self.events.publish("ClipboardCopyBlocked", {
+                'reason': 'empty_data',
+                'entry_id': source_entry_id,
+                'data_type': data_type,
+                'timestamp': datetime.utcnow().isoformat()
+            })
             return False
 
         with self._timer_lock:

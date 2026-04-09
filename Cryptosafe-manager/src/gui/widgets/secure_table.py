@@ -93,7 +93,11 @@ class SecureTable(QTreeWidget):
                 item.setBackground(3, QBrush())
 
     def add_entry(self, entry_id: str, title: str, username: str,
-                  password: str, url: str, updated_at: str = ""):
+                  password: str, url: str, updated_at: str = "", allow_copy: bool = True):
+
+        if not allow_copy:
+            title = "🔒 " + title
+
         if len(username) > 4:
             masked_username = username[:4] + "••••"
         else:
@@ -356,7 +360,9 @@ class SecureTable(QTreeWidget):
                 except Exception as e:
                     main_window.copy_to_clipboard(item.text(1), data_type="username", entry_id=entry_id)
 
+
         elif action == copy_password:
+
             password = self._passwords[idx]
             if hasattr(main_window, 'copy_to_clipboard'):
                 main_window.copy_to_clipboard(password, data_type="password", entry_id=entry_id)

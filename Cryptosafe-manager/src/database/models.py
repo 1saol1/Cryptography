@@ -28,7 +28,8 @@ def create_tables(conn):
             deleted_at TIMESTAMP,
             tags TEXT DEFAULT '[]',
             totp_secret TEXT,
-            share_metadata TEXT
+            share_metadata TEXT,
+            allow_copy INTEGER DEFAULT 1
         )
     """)
 
@@ -81,8 +82,9 @@ def create_tables(conn):
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE NOT NULL,
-            value TEXT NOT NULL,
+            setting_key TEXT UNIQUE,
+            setting_value TEXT,
+            encrypted INTEGER DEFAULT 0,
             description TEXT,
             updated_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
@@ -123,6 +125,13 @@ def create_tables(conn):
             ('auto_lock_timeout', '60', 'Таймаут авто-блокировки (минуты)'),
             ('session_timeout', '60', 'Максимальное время сессии (минуты)'),
             ('clipboard_clear_timeout', '30', 'Время очистки буфера обмена (секунды)'),
+            ('clipboard_security_level', 'standard', 'Уровень безопасности: standard/secure/paranoid'),
+            ('clipboard_monitor_enabled', 'true', 'Включить мониторинг буфера обмена'),
+            ('clipboard_monitor_interval', '1', 'Интервал проверки буфера (секунды)'),
+            ('clipboard_suspicious_threshold', '3', 'Порог подозрительных действий'),
+            ('clipboard_notifications_enabled', 'true', 'Показывать всплывающие уведомления'),
+            ('clipboard_warn_before_clear', '5', 'Предупреждение за N секунд до очистки'),
+            ('clipboard_whitelist', '[]', 'Белый список приложений (JSON)'),
             ('theme', 'system', 'Тема оформления (system/light/dark)'),
             ('language', 'ru', 'Язык интерфейса'),
             ('trash_retention_days', '30', 'Сколько дней хранить удаленные записи'),
@@ -130,10 +139,10 @@ def create_tables(conn):
             ('password_exclude_ambiguous', 'true', 'Исключать неоднозначные символы')
         ]
 
-        for name, value, description in default_settings:
+        for setting_key, setting_value, description in default_settings:
             cursor.execute(
-                "INSERT INTO settings (name, value, description) VALUES (?, ?, ?)",
-                (name, value, description)
+                "INSERT INTO settings (setting_key, setting_value, description) VALUES (?, ?, ?)",
+                (setting_key, setting_value, description)
             )
         logger.info(f"Добавлено {len(default_settings)} настроек по умолчанию")
 
@@ -160,14 +169,14 @@ def update_db_version(conn, new_version: int):
 
 def get_setting(conn, name: str, default=None):
     cursor = conn.cursor()
-    cursor.execute("SELECT value FROM settings WHERE name = ?", (name,))
+    cursor.execute("SELECT setting_value FROM settings WHERE setting_key = ?", (name,))
     result = cursor.fetchone()
     return result[0] if result else default
 
 
 def get_all_settings(conn) -> dict:
     cursor = conn.cursor()
-    cursor.execute("SELECT name, value, description FROM settings ORDER BY name")
+    cursor.execute("SELECT setting_key, setting_value, description FROM settings ORDER BY setting_key")
     rows = cursor.fetchall()
 
     settings = {
@@ -180,7 +189,7 @@ def get_all_settings(conn) -> dict:
 def update_setting(conn, name: str, value: str) -> bool:
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE name = ?",
+        "UPDATE settings SET setting_value = ?, updated_at = CURRENT_TIMESTAMP WHERE setting_key = ?",
         (value, name)
     )
     conn.commit()
@@ -196,7 +205,7 @@ def update_settings(conn, settings_dict: dict) -> int:
 
     for name, value in settings_dict.items():
         cursor.execute(
-            "UPDATE settings SET value = ?, updated_at = CURRENT_TIMESTAMP WHERE name = ?",
+            "UPDATE settings SET setting_value = ?, updated_at = CURRENT_TIMESTAMP WHERE setting_key = ?",
             (value, name)
         )
         if cursor.rowcount > 0:
@@ -208,42 +217,42 @@ def update_settings(conn, settings_dict: dict) -> int:
 
 
 def reset_setting_to_default(conn, name: str) -> bool:
-    default_settings = [
-        ('password_min_length', '12', 'Минимальная длина пароля'),
-        ('password_require_upper', 'true', 'Требовать заглавные буквы'),
-        ('password_require_lower', 'true', 'Требовать строчные буквы'),
-        ('password_require_digit', 'true', 'Требовать цифры'),
-        ('password_require_special', 'true', 'Требовать спецсимволы'),
-        ('argon2_time_cost', '3', 'Количество итераций Argon2'),
-        ('argon2_memory_cost', '65536', 'Используемая память Argon2 (KB)'),
-        ('argon2_parallelism', '4', 'Количество потоков Argon2'),
-        ('pbkdf2_iterations', '600000', 'Количество итераций PBKDF2'),
-        ('auto_lock_timeout', '60', 'Таймаут авто-блокировки (минуты)'),
-        ('session_timeout', '60', 'Максимальное время сессии (минуты)'),
-        ('clipboard_clear_timeout', '30', 'Время очистки буфера обмена (секунды)'),
-        ('clipboard_security_level', 'standard', 'Уровень безопасности: standard/secure/paranoid'),
-        ('clipboard_monitor_enabled', 'true', 'Включить мониторинг буфера обмена'),
-        ('clipboard_monitor_interval', '1', 'Интервал проверки буфера (секунды)'),
-        ('clipboard_suspicious_threshold', '3', 'Порог подозрительных действий'),
-        ('clipboard_notifications_enabled', 'true', 'Показывать всплывающие уведомления'),
-        ('clipboard_warn_before_clear', '5', 'Предупреждение за N секунд до очистки'),
-        ('clipboard_whitelist', '[]', 'Белый список приложений (JSON)'),
-        ('theme', 'system', 'Тема оформления (system/light/dark)'),
-        ('language', 'ru', 'Язык интерфейса'),
-        ('trash_retention_days', '30', 'Сколько дней хранить удаленные записи'),
-        ('default_password_length', '16', 'Длина пароля по умолчанию'),
-        ('password_exclude_ambiguous', 'true', 'Исключать неоднозначные символы')
-    ]
+    default_settings = {
+        'password_min_length': '12',
+        'password_require_upper': 'true',
+        'password_require_lower': 'true',
+        'password_require_digit': 'true',
+        'password_require_special': 'true',
+        'argon2_time_cost': '3',
+        'argon2_memory_cost': '65536',
+        'argon2_parallelism': '4',
+        'pbkdf2_iterations': '600000',
+        'auto_lock_timeout': '60',
+        'session_timeout': '60',
+        'clipboard_clear_timeout': '30',
+        'clipboard_security_level': 'standard',
+        'clipboard_monitor_enabled': 'true',
+        'clipboard_monitor_interval': '1',
+        'clipboard_suspicious_threshold': '3',
+        'clipboard_notifications_enabled': 'true',
+        'clipboard_warn_before_clear': '5',
+        'clipboard_whitelist': '[]',
+        'theme': 'system',
+        'language': 'ru',
+        'trash_retention_days': '30',
+        'default_password_length': '16',
+        'password_exclude_ambiguous': 'true'
+    }
 
-    if name in defaults:
-        return update_setting(conn, name, defaults[name])
+    if name in default_settings:
+        return update_setting(conn, name, default_settings[name])
     return False
 
 
 def get_settings_group(conn, group_prefix: str) -> dict:
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT name, value FROM settings WHERE name LIKE ? ORDER BY name",
+        "SELECT setting_key, setting_value FROM settings WHERE setting_key LIKE ? ORDER BY setting_key",
         (f"{group_prefix}%",)
     )
     rows = cursor.fetchall()
