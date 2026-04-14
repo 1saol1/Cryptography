@@ -1,4 +1,5 @@
 from datetime import datetime
+import traceback
 from src.core.events import (
     ENTRY_ADDED, ENTRY_UPDATED, ENTRY_DELETED,
     CLIPBOARD_COPIED, CLIPBOARD_CLEARED,
@@ -23,6 +24,9 @@ class AuditLogger:
         self.event_bus.subscribe(CLIPBOARD_PROTECTION_ENABLED, self.log_protection_enabled)
 
         self.event_bus.subscribe("ClipboardCopyBlocked", self.log_copy_blocked)
+        self.event_bus.subscribe("ClipboardClearFailed", self.log_clear_failed)
+        self.event_bus.subscribe("ClipboardMonitoringFailed", self.log_monitoring_failed)
+        self.event_bus.subscribe("ClipboardMonitoringDisabled", self.log_monitoring_disabled)
 
     def log_entry_added(self, data):
         print(
@@ -79,6 +83,7 @@ class AuditLogger:
         print(
             f"[AUDIT] {datetime.utcnow()} — БЕЗОПАСНОСТЬ: ВКЛЮЧЕН РЕЖИМ ЗАЩИТЫ! Причина: {reason}, подозрений: {suspicious_count}")
 
+
     def log_copy_blocked(self, data):
         reason = data.get('reason', 'unknown')
         entry_id = data.get('entry_id')
@@ -86,15 +91,48 @@ class AuditLogger:
 
         if reason == 'allow_copy_disabled':
             print(
-                f"[AUDIT] {datetime.utcnow()} — БУФЕР: заблокировано копирование пароля из записи {entry_id} (запрещено настройками)")
+                f"[AUDIT] {datetime.utcnow()} — ОШИБКА: заблокировано копирование {data_type} из записи {entry_id} (запрещено настройками)")
         elif reason == 'vault_locked':
-            print(f"[AUDIT] {datetime.utcnow()} — БУФЕР: заблокировано копирование (хранилище заблокировано)")
+            print(f"[AUDIT] {datetime.utcnow()} — ОШИБКА: заблокировано копирование (хранилище заблокировано)")
         elif reason == 'session_inactive':
-            print(f"[AUDIT] {datetime.utcnow()} — БУФЕР: заблокировано копирование (сессия не активна)")
+            print(f"[AUDIT] {datetime.utcnow()} — ОШИБКА: заблокировано копирование (сессия не активна)")
         elif reason == 'empty_data':
-            print(f"[AUDIT] {datetime.utcnow()} — БУФЕР: заблокировано копирование (пустые данные)")
+            print(f"[AUDIT] {datetime.utcnow()} — ОШИБКА: заблокировано копирование (пустые данные)")
         else:
-            print(f"[AUDIT] {datetime.utcnow()} — БУФЕР: заблокировано копирование (причина: {reason})")
+            print(f"[AUDIT] {datetime.utcnow()} — ОШИБКА: заблокировано копирование (причина: {reason})")
+
+    def log_clear_failed(self, data):
+        reason = data.get('reason', 'unknown')
+        print(f"[AUDIT] {datetime.utcnow()} — ОШИБКА: не удалось очистить буфер обмена (причина: {reason})")
+        print(f"[AUDIT] {datetime.utcnow()} — РЕКОМЕНДАЦИЯ: очистите буфер вручную (Ctrl+C пустой строки)")
+
+    def log_monitoring_failed(self, data):
+        reason = data.get('reason', 'unknown')
+        print(f"[AUDIT] {datetime.utcnow()} — ОШИБКА: не удалось запустить мониторинг буфера (причина: {reason})")
+        print(f"[AUDIT] {datetime.utcnow()} — СОСТОЯНИЕ: функции безопасности ограничены")
+
+    def log_monitoring_disabled(self, data):
+        reason = data.get('reason', 'disabled_in_settings')
+        print(f"[AUDIT] {datetime.utcnow()} — СОСТОЯНИЕ: мониторинг буфера обмена отключен (причина: {reason})")
+
+    def log_exception(self, error_type: str, error_msg: str, include_traceback: bool = False):
+        print(f"[AUDIT] {datetime.utcnow()} — ИСКЛЮЧЕНИЕ: {error_type} - {error_msg}")
+
+        if include_traceback:
+            tb = traceback.format_exc()
+
+            safe_tb = self._sanitize_traceback(tb)
+            print(f"[AUDIT] {datetime.utcnow()} — TRACEBACK: {safe_tb[:500]}")
+
+    def _sanitize_traceback(self, tb: str) -> str:
+        lines = tb.split('\n')
+        sanitized = []
+        for line in lines:
+            if 'password' in line.lower() or 'secret' in line.lower() or 'token' in line.lower():
+                sanitized.append('[СОДЕРЖИТ ЧУВСТВИТЕЛЬНЫЕ ДАННЫЕ - СКРЫТО]')
+            else:
+                sanitized.append(line)
+        return '\n'.join(sanitized)
 
     def log(self, data):
         print(f"[AUDIT] {datetime.utcnow()} — {data}")

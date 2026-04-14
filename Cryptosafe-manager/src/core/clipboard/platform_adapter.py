@@ -80,7 +80,7 @@ class WindowsClipboardAdapter(ClipboardAdapter):
             win32clipboard.CloseClipboard()
             return True
         except Exception as e:
-            print(f"Windows clear error: {e}")
+            print(f"Clear error: {e}")
             try:
                 win32clipboard.CloseClipboard()
             except:

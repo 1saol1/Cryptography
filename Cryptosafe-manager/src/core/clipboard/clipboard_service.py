@@ -12,6 +12,7 @@ class ClipboardService:
         self.state_manager = state_manager
         self.config = config_manager
         self.clipboard_settings = clipboard_settings
+        self._monitor = None
 
         self.platform_adapter: ClipboardAdapter = get_platform_adapter()
 
@@ -27,6 +28,9 @@ class ClipboardService:
 
         self.events.subscribe("UserLoggedOut", self._on_user_logged_out)
         self.events.subscribe("UserLoggedIn", self._on_user_logged_in)
+
+    def set_monitor(self, monitor):
+        self._monitor = monitor
 
     def _load_settings(self):
         try:
@@ -74,6 +78,16 @@ class ClipboardService:
     def copy_to_clipboard(self, data: str, data_type: str = "text",
                           source_entry_id: Optional[str] = None,
                           show_notification: bool = True) -> bool:
+
+        if self._monitor and self._monitor.is_protection_mode():
+            self.events.publish("ClipboardCopyBlocked", {
+                'reason': 'protection_mode_active',
+                'entry_id': source_entry_id,
+                'data_type': data_type,
+                'timestamp': datetime.utcnow().isoformat()
+            })
+            print("[CLIPBOARD] Копирование заблокировано: активен режим защиты")
+            return False
 
         if self.state_manager.is_locked or not self.state_manager.logged_in:
             self.events.publish("ClipboardCopyBlocked", {
@@ -143,7 +157,15 @@ class ClipboardService:
     def clear_clipboard(self, manual: bool = True) -> bool:
         with self._timer_lock:
             reason = "manual" if manual else "programmatic"
-            return self._clear_clipboard_internal(reason)
+            success = self._clear_clipboard_internal(reason)
+
+            if not success and manual:
+                self.events.publish("ClipboardClearFailed", {
+                    'reason': 'adapter_error',
+                    'timestamp': datetime.utcnow().isoformat()
+                })
+
+            return success
 
     def _clear_clipboard_internal(self, reason: str) -> bool:
         if self._timer:
@@ -221,6 +243,22 @@ class ClipboardService:
                 return None
 
             return data
+
+    def is_monitoring_available(self) -> bool:
+        try:
+            if not hasattr(self, 'platform_adapter') or not self.platform_adapter._available:
+                return False
+            test = self.platform_adapter.get_clipboard_content()
+            return True
+        except Exception:
+            return False
+
+    def _log_error(self, error_type: str, error_msg: str):
+        self.events.publish("AuditError", {
+            'error_type': error_type,
+            'error_msg': error_msg,
+            'timestamp': datetime.utcnow().isoformat()
+        })
 
     def is_clipboard_active(self) -> bool:
         with self._timer_lock:

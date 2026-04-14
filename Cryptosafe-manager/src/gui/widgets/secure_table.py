@@ -46,7 +46,6 @@ class SecureTable(QTreeWidget):
         self._search_text = ""
 
     def get_main_window(self):
-        """Рекурсивно ищем главное окно CryptoSafeApp"""
         parent = self.parent()
         while parent:
             if parent.__class__.__name__ == 'CryptoSafeApp':

@@ -170,6 +170,11 @@ class CryptoSafeApp(QMainWindow):
         )
 
         self._load_clipboard_settings()
+        self.clipboard_service.set_monitor(self.clipboard_monitor)
+
+        self.event_bus.subscribe("ClipboardClearFailed", self._on_clear_failed)
+        self.event_bus.subscribe("ClipboardMonitoringDisabled", self._on_monitoring_disabled)
+        self.event_bus.subscribe("AuditError", self._on_audit_error)
 
         self.event_bus.subscribe(CLIPBOARD_COPIED, self.on_clipboard_copied_event)
         self.event_bus.subscribe(CLIPBOARD_CLEARED, self.on_clipboard_cleared_event)
@@ -201,7 +206,6 @@ class CryptoSafeApp(QMainWindow):
             print(f"[APP] Ошибка загрузки настроек буфера: {e}")
 
     def _update_clipboard_status(self):
-        """Обновляет отображение статуса буфера обмена в реальном времени (UI-2 + UI-3)"""
         if hasattr(self, 'clipboard_service'):
             status = self.clipboard_service.get_current_status()
             if status.get('active', False):
@@ -230,14 +234,12 @@ class CryptoSafeApp(QMainWindow):
                     )
 
     def _show_toast_notification(self, title: str, message: str, icon):
-        """Показывает всплывающее уведомление (toast) (UI-3)"""
         if hasattr(self, 'tray_icon') and self.tray_icon.isVisible():
             self.tray_icon.showMessage(title, message, icon, 3000)
         else:
             self.status_bar.showMessage(f"{title}: {message}")
 
     def _create_tray_icon(self):
-        """Создаёт системный трей (вызывается только один раз)"""
         if self.tray_icon is not None:
             print("[APP] Трей-иконка уже существует")
             return
@@ -292,7 +294,6 @@ class CryptoSafeApp(QMainWindow):
         print("[APP] Системный трей успешно создан")
 
     def show_normal(self):
-        """Показывает окно и восстанавливает данные (восстановление из трея)"""
         print("[APP] Восстановление окна из трея")
 
         # Проверяем, активна ли сессия
@@ -317,13 +318,56 @@ class CryptoSafeApp(QMainWindow):
         self.state.update_activity()
         print("[APP] Окно восстановлено, данные загружены")
 
+    def _on_audit_error(self, data):
+        if data:
+            error_type = data.get('error_type', 'Unknown')
+            error_msg = data.get('error_msg', '')
+            print(f"[APP] Аудит ошибки: {error_type} - {error_msg}")
+
+    def _on_clear_failed(self, data):
+        from PyQt6.QtWidgets import QMessageBox
+
+        QMessageBox.warning(
+            self,
+            "Ошибка очистки буфера",
+            "Не удалось автоматически очистить буфер обмена.\n\n"
+            "Пожалуйста, очистите буфер вручную одним из способов:\n"
+            "• Нажмите Ctrl+C (скопируйте пустую строку)\n"
+            "• Или используйте пункт 'Очистить буфер' в меню трея\n"
+            "• Или нажмите кнопку 'Очистить буфер' в настройках\n\n"
+            "Рекомендуется очистить буфер для защиты данных."
+        )
+        self.status_bar.showMessage("ОШИБКА: Не удалось очистить буфер обмена! Очистите вручную.")
+
+    def _on_monitoring_failed(self, data):
+        from PyQt6.QtWidgets import QMessageBox
+
+        reason = data.get('reason', 'Неизвестная ошибка') if data else 'Неизвестная ошибка'
+
+        QMessageBox.warning(
+            self,
+            "Предупреждение: Мониторинг буфера обмена не работает",
+            f"Не удалось запустить мониторинг буфера обмена.\n\n"
+            f"Причина: {reason}\n\n"
+            f"Функции безопасности будут ограничены:\n"
+            f"• Обнаружение подозрительного доступа НЕ РАБОТАЕТ\n"
+            f"• Автоматическая защита НЕ РАБОТАЕТ\n\n"
+            f"Рекомендации:\n"
+            f"• Вручную очищайте буфер обмена после копирования паролей\n"
+            f"• Используйте пункт 'Очистить буфер' в меню трея\n"
+            f"• Перезапустите приложение для повторной попытки"
+        )
+        self.status_bar.showMessage("ВНИМАНИЕ: Мониторинг буфера обмена не работает! Безопасность ограничена.")
+
+    def _on_monitoring_disabled(self, data):
+        self.status_bar.showMessage("Мониторинг буфера обмена отключен в настройках")
+
     def _on_tray_icon_activated(self, reason):
         if reason == QSystemTrayIcon.ActivationReason.DoubleClick:
             self.show_normal()
 
     def copy_to_clipboard(self, text: str, data_type: str = "text", entry_id: str = None):
         if not self.state.is_active():
-            # ДОБАВЬТЕ ЭТОТ БЛОК
             self.event_bus.publish("ClipboardCopyBlocked", {
                 'reason': 'session_inactive',
                 'entry_id': entry_id,
@@ -339,7 +383,6 @@ class CryptoSafeApp(QMainWindow):
             try:
                 allow_copy = self.entry_manager.get_allow_copy(entry_id)
                 if not allow_copy:
-                    # ДОБАВЬТЕ ЭТОТ БЛОК
                     self.event_bus.publish("ClipboardCopyBlocked", {
                         'reason': 'allow_copy_disabled',
                         'entry_id': entry_id,
@@ -378,7 +421,6 @@ class CryptoSafeApp(QMainWindow):
         if event.type() == QEvent.Type.WindowStateChange:
             if self.windowState() & Qt.WindowState.WindowMinimized:
                 print("[APP] Окно минимизировано — очищаем только данные таблицы (ключи сохранены)")
-                # Убрали self.key_manager.on_app_minimize() - не трогаем ключи
                 self._clear_decrypted_data()
 
                 self.hide()
@@ -388,7 +430,6 @@ class CryptoSafeApp(QMainWindow):
         super().changeEvent(event)
 
     def _clear_decrypted_data(self):
-        """Очищает данные при сворачивании, сохраняя ID записей"""
         self._saved_entry_ids = []
         for i in range(self.table.topLevelItemCount()):
             item = self.table.topLevelItem(i)
@@ -402,7 +443,6 @@ class CryptoSafeApp(QMainWindow):
         self.status_bar.showMessage("Данные защищены - окно свернуто")
 
     def _restore_decrypted_data(self):
-        """Восстанавливает записи по сохранённым ID"""
         if self._saved_entry_ids:
             try:
                 entries = []
@@ -439,21 +479,15 @@ class CryptoSafeApp(QMainWindow):
             self.close()
 
     def closeEvent(self, event):
-        """Обработка нажатия на крестик - всегда сворачиваем в трей"""
         if self._force_closing:
             self._force_close(event)
             return
 
-        # Всегда сворачиваем в трей при нажатии на крестик
         print("[APP] Крестик нажат — сворачиваем в трей")
-
-        # Очищаем данные таблицы (ключи не трогаем)
         self._clear_decrypted_data()
 
-        # Прячем окно
         self.hide()
 
-        # Показываем уведомление (если трей существует)
         if self.tray_icon is not None and self.tray_icon.isVisible():
             self.tray_icon.showMessage(
                 "CryptoSafe Manager",
@@ -462,18 +496,15 @@ class CryptoSafeApp(QMainWindow):
                 2000
             )
 
-        event.ignore()  # Отменяем закрытие
+        event.ignore()
 
     def _force_exit(self):
-        """Выход только через меню трея или главное меню"""
         print("[APP] Принудительный выход из приложения")
         self._force_closing = True
 
-        # Закрываем приложение
         QApplication.quit()
 
     def _force_close(self, event=None):
-        """Принудительное закрытие (вызывается только при реальном выходе)"""
         print("[APP] Полное завершение приложения...")
 
         # Остановка сервисов
