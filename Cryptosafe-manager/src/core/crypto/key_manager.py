@@ -113,3 +113,19 @@ class KeyManager:
 
     def get_params(self) -> dict:
         return self.derivation.get_params()
+
+    def derive_key(self, purpose: str, length: int = 32) -> bytes:
+        cached_key = self.get_cached_key()
+        if cached_key is None:
+            raise ValueError(
+                "No master key cached. User must authenticate first before deriving keys."
+            )
+
+        derived_key = self.derivation.derive_key_with_hkdf(
+            master_key=cached_key,
+            context=f"cryptosafe-{purpose}-v1",
+            length=length
+        )
+
+        logger.debug(f"Derived {length}-byte key for purpose: {purpose}")
+        return derived_key

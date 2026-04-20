@@ -217,7 +217,6 @@ class CryptoSafeApp(QMainWindow):
                         f"📋 {data_type} в буфере | очистится через {remaining} сек"
                     )
 
-                    # UI-3: Предупреждение за 5 секунд до очистки
                     if remaining == 5 and not self._warning_shown:
                         self._warning_shown = True
                         self._show_toast_notification(
@@ -230,7 +229,7 @@ class CryptoSafeApp(QMainWindow):
 
                 elif remaining == -1:
                     self.status_bar.showMessage(
-                        f"📋 {data_type} в буфере | авто-очистка отключена"
+                        f"{data_type} в буфере | авто-очистка отключена"
                     )
 
     def _show_toast_notification(self, title: str, message: str, icon):

@@ -30,6 +30,8 @@ class AuditLogSigner:
             self._init_hmac_key()
 
     def _init_ed25519_keys(self):
+        """Derive Ed25519 key pair."""
+        # Derive 32-byte seed for Ed25519 using HKDF with context "audit-signing"
         key_material = self.key_manager.derive_key(
             purpose="audit-signing",
             length=32
@@ -39,6 +41,7 @@ class AuditLogSigner:
         logger.info("AuditLogSigner initialized with Ed25519")
 
     def _init_hmac_key(self):
+        """Derive HMAC key as fallback."""
         key_material = self.key_manager.derive_key(
             purpose="audit-signing-hmac",
             length=32

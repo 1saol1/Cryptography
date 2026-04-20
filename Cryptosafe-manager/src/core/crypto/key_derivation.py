@@ -7,6 +7,8 @@ import os
 import secrets
 import logging
 from typing import Optional, Dict
+import hashlib
+import hmac
 
 logger = logging.getLogger(__name__)
 
@@ -77,3 +79,29 @@ class KeyDerivation:
             'argon2_parallelism': self.argon2_hasher.parallelism,
             'pbkdf2_iterations': self.pbkdf2_iterations
         }
+
+    def derive_key_with_hkdf(self, master_key: bytes, context: str, length: int = 32) -> bytes:
+        hash_func = hashlib.sha256
+        hash_len = 32
+
+        salt = b"cryptosafe-hkdf-v1"
+
+        if isinstance(context, str):
+            context = context.encode('utf-8')
+
+        prk = hmac.new(salt, master_key, hash_func).digest()
+
+        output = b""
+        counter = 1
+        while len(output) < length:
+            if counter == 1:
+                data = context + bytes([counter])
+            else:
+                prev_chunk = output[-hash_len:]
+                data = prev_chunk + context + bytes([counter])
+
+            chunk = hmac.new(prk, data, hash_func).digest()
+            output += chunk
+            counter += 1
+
+        return output[:length]
