@@ -61,11 +61,27 @@ def create_tables(conn):
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS audit_log (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            action TEXT NOT NULL,
-            timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
-            entry_id TEXT,
-            details TEXT,
-            signature TEXT
+            sequence_number INTEGER NOT NULL UNIQUE,
+            previous_hash TEXT NOT NULL,
+            event_type TEXT NOT NULL,
+            entry_data BLOB NOT NULL,
+            entry_hash TEXT NOT NULL,
+            signature TEXT NOT NULL,
+            timestamp TEXT NOT NULL
+        )
+    """)
+
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_sequence ON audit_log(sequence_number)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_timestamp ON audit_log(timestamp)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_audit_log_event_type ON audit_log(event_type)")
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS audit_public_key (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            public_key TEXT NOT NULL,
+            algorithm TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
         )
     """)
 

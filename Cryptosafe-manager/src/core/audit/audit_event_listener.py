@@ -151,21 +151,47 @@ class AuditEventListener:
         self.set_current_user(None)
         logger.info(f"Audit logged: user {username} logged out")
 
-    def _on_clipboard_copied(self, data: Any):
-        content_type = self._extract_clipboard_content_type(data)
+    def _extract_entry_id(self, data: Any) -> Optional[str]:
+        if isinstance(data, dict):
+            return data.get("entry_id") or data.get("id")
+        elif hasattr(data, "id"):
+            return str(data.id)
+        elif isinstance(data, str):
+            return data
+        return None
 
-        self.audit_logger.log_event(
-            event_type="CLIPBOARD_COPY",
-            severity="INFO",
-            source="clipboard.service",
-            details={
-                "operation": "copy",
-                "content_type": content_type,
-                "action": "copied_to_clipboard"
-            },
-            user_id=self._current_user_id
-        )
-        logger.debug(f"Audit logged: clipboard copy ({content_type})")
+    def _extract_username(self, data: Any) -> Optional[str]:
+        if isinstance(data, dict):
+            return data.get("username") or data.get("user")
+        elif hasattr(data, "username"):
+            return data.username
+        elif isinstance(data, str):
+            return data
+        return None
+
+    def _extract_clipboard_content_type(self, data: Any) -> str:
+        if isinstance(data, dict):
+            return data.get("content_type", "unknown")
+        return "text" if data is not None else "unknown"
+
+    def _on_clipboard_copied(self, data: Any):
+        try:
+            content_type = self._extract_clipboard_content_type(data)
+
+            self.audit_logger.log_event(
+                event_type="CLIPBOARD_COPY",
+                severity="INFO",
+                source="clipboard.service",
+                details={
+                    "operation": "copy",
+                    "content_type": content_type,
+                    "action": "copied_to_clipboard"
+                },
+                user_id=self._current_user_id
+            )
+            logger.debug(f"Audit logged: clipboard copy ({content_type})")
+        except Exception as e:
+            logger.error(f"Failed to log clipboard copy: {e}")
 
     def _on_clipboard_cleared(self, data: Any):
         clear_type = "manual" if data is None else str(data)
@@ -212,27 +238,3 @@ class AuditEventListener:
             user_id=self._current_user_id
         )
         logger.debug("Audit logged: clipboard protection enabled")
-
-
-    def _extract_entry_id(self, data: Any) -> Optional[str]:
-        if isinstance(data, dict):
-            return data.get("entry_id") or data.get("id")
-        elif hasattr(data, "id"):
-            return str(data.id)
-        elif isinstance(data, str):
-            return data
-        return None
-
-    def _extract_username(self, data: Any) -> Optional[str]:
-        if isinstance(data, dict):
-            return data.get("username") or data.get("user")
-        elif hasattr(data, "username"):
-            return data.username
-        elif isinstance(data, str):
-            return data
-        return None
-
-    def _extract_clipboard_content_type(self, data: Any) -> str:
-        if isinstance(data, dict):
-            return data.get("content_type", "unknown")
-        return "text" if data is not None else "unknown"

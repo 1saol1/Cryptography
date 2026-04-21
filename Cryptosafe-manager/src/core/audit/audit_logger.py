@@ -2,6 +2,7 @@ import json
 import hashlib
 import sqlite3
 import threading
+import os
 from datetime import datetime, timezone
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass
@@ -81,21 +82,44 @@ class LogEntry:
 
 class AuditLogger:
 
-    def __init__(self, db_connection: sqlite3.Connection, signer, config: Dict[str, Any]):
-        self.db = db_connection
+    def __init__(self, db_connection: Optional[sqlite3.Connection], signer, config: Dict[str, Any]):
+        self.external_connection = db_connection
         self.signer = signer
         self.config = config
-        self._async_queue: List[Dict] = []
+        self._async_queue: List[LogEntry] = []
         self._lock = threading.Lock()
+
+        if self.external_connection is None:
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            self.db_path = os.path.join(base_dir, "src", "database", "cryptosafe.db")
+        else:
+            self.db_path = None
+
         self._init_log_structure()
 
-    def _init_log_structure(self):
-        cursor = self.db.execute("SELECT COUNT(*) FROM audit_log")
-        count = cursor.fetchone()[0]
+    def _get_connection(self):
+        if self.external_connection is not None:
+            return self.external_connection
 
-        if count == 0:
-            self._create_genesis_entry()
-            logger.info("Audit log initialized with genesis entry")
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    def _close_connection(self, conn):
+        if self.external_connection is None and conn is not None:
+            conn.close()
+
+    def _init_log_structure(self):
+        conn = self._get_connection()
+        try:
+            cursor = conn.execute("SELECT COUNT(*) FROM audit_log")
+            count = cursor.fetchone()[0]
+
+            if count == 0:
+                self._create_genesis_entry()
+                logger.info("Audit log initialized with genesis entry")
+        finally:
+            self._close_connection(conn)
 
     def _create_genesis_entry(self):
         genesis_entry = LogEntry(
@@ -110,15 +134,13 @@ class AuditLogger:
         )
         self._write_entry(genesis_entry)
 
-    def _get_next_sequence(self) -> int:
-        cursor = self.db.execute(
-            "SELECT MAX(sequence_number) FROM audit_log"
-        )
+    def _get_next_sequence(self, conn) -> int:
+        cursor = conn.execute("SELECT MAX(sequence_number) FROM audit_log")
         max_seq = cursor.fetchone()[0]
         return (max_seq or -1) + 1
 
-    def _get_latest_hash(self) -> str:
-        cursor = self.db.execute(
+    def _get_latest_hash(self, conn) -> str:
+        cursor = conn.execute(
             "SELECT entry_hash FROM audit_log ORDER BY sequence_number DESC LIMIT 1"
         )
         row = cursor.fetchone()
@@ -154,8 +176,12 @@ class AuditLogger:
             user_id: Optional[str] = None,
             entry_id: Optional[str] = None
     ):
-
-        previous_hash = self._get_latest_hash()
+        conn = self._get_connection()
+        try:
+            previous_hash = self._get_latest_hash(conn)
+            sequence_number = self._get_next_sequence(conn)
+        finally:
+            self._close_connection(conn)
 
         entry = LogEntry(
             timestamp=datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
@@ -164,7 +190,7 @@ class AuditLogger:
             user_id=user_id or 'anonymous',
             source=source,
             details=self._sanitize_details(details),
-            sequence_number=self._get_next_sequence(),
+            sequence_number=sequence_number,
             previous_hash=previous_hash,
             entry_id=entry_id
         )
@@ -177,6 +203,9 @@ class AuditLogger:
     def _async_log(self, entry: LogEntry):
         with self._lock:
             self._async_queue.append(entry)
+            # Если очередь большая, можно сразу записать
+            if len(self._async_queue) > 10:
+                self.flush_async_queue()
 
     def flush_async_queue(self):
         with self._lock:
@@ -185,29 +214,40 @@ class AuditLogger:
             self._async_queue.clear()
 
     def _write_entry(self, entry: LogEntry):
-        entry_dict = entry.to_dict()
-        entry_json = json.dumps(entry_dict, sort_keys=True, default=str)
-        entry_hash = hashlib.sha256(entry_json.encode()).hexdigest()
+        conn = self._get_connection()
+        try:
+            entry_dict = entry.to_dict()
+            entry_json = json.dumps(entry_dict, sort_keys=True, default=str)
+            entry_hash = hashlib.sha256(entry_json.encode()).hexdigest()
+            signature = self.signer.sign(entry_json.encode())
+            entry_data_blob = entry_json.encode('utf-8')
 
-        signature = self.signer.sign(entry_json.encode())
-
-        self.db.execute(
-            """
-            INSERT INTO audit_log
-            (sequence_number, previous_hash, entry_data, entry_hash, signature, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (
-                entry.sequence_number,
-                entry.previous_hash,
-                entry_json,
-                entry_hash,
-                signature.hex(),
-                entry.timestamp
+            conn.execute(
+                """
+                INSERT INTO audit_log
+                (sequence_number, previous_hash, event_type, entry_data, entry_hash, signature, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    entry.sequence_number,
+                    entry.previous_hash,
+                    entry.event_type,
+                    entry_data_blob,
+                    entry_hash,
+                    signature.hex(),
+                    entry.timestamp
+                )
             )
-        )
-        self.db.commit()
+            conn.commit()
+        except Exception as e:
+            logger.error(f"Failed to write audit entry: {e}")
+        finally:
+            self._close_connection(conn)
 
     def get_entry_count(self) -> int:
-        cursor = self.db.execute("SELECT COUNT(*) FROM audit_log")
-        return cursor.fetchone()[0]
+        conn = self._get_connection()
+        try:
+            cursor = conn.execute("SELECT COUNT(*) FROM audit_log")
+            return cursor.fetchone()[0]
+        finally:
+            self._close_connection(conn)

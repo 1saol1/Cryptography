@@ -1,6 +1,4 @@
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QLineEdit, QCheckBox
-from PyQt6.QtCore import Qt
-
 
 class PasswordEntry(QWidget):
     def __init__(self, parent=None):

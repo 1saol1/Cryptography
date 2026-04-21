@@ -1,10 +1,14 @@
+import json
+import sqlite3
 import sys
 import os
 from datetime import datetime
+from typing import Dict, Any
+
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QMessageBox, QFileDialog,
                              QStatusBar, QLabel, QDialog,
-                             QLineEdit, QToolBar, QSystemTrayIcon, QMenu)
+                             QLineEdit, QToolBar, QSystemTrayIcon, QMenu, QProgressDialog, QTextEdit)
 from PyQt6.QtCore import Qt, QTimer, QEvent
 from PyQt6.QtGui import QAction, QKeySequence
 
@@ -12,7 +16,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 sys.path.insert(0, BASE_DIR)
 
 from src.core.events import EventBus, ENTRY_ADDED, CLIPBOARD_COPIED, CLIPBOARD_CLEARED
-from src.database.audit_logger import AuditLogger
+from src.core.audit.audit_logger import AuditLogger
 from src.database.db import Database
 from src.gui.widgets.secure_table import SecureTable
 from src.gui.widgets.audit_log_viewer import AuditLogViewer
@@ -37,6 +41,13 @@ from src.gui.widgets.clipboard_preview import ClipboardPreviewWidget
 from src.core.vault.entry_manager import EntryManager
 from src.gui.widgets.entry_dialog import EntryDialog
 
+from src.core.audit.log_verifier import LogVerifier
+from src.core.audit.log_signer import AuditLogSigner
+from src.core.audit.audit_event_listener import AuditEventListener
+
+import logging
+
+logger = logging.getLogger(__name__)
 
 class LoginDialog(QDialog):
     def __init__(self, parent, auth, session):
@@ -103,8 +114,7 @@ class CryptoSafeApp(QMainWindow):
         self.auth = auth
         self.current_filters = {}
         self._saved_entry_ids = []
-        self._warning_shown = False  # Для UI-3: флаг предупреждения за 5 секунд
-        self._force_closing = False
+        self._warning_shown = False
 
         self.setWindowTitle("CryptoSafe Manager")
         self.setGeometry(100, 100, 960, 620)
@@ -114,23 +124,54 @@ class CryptoSafeApp(QMainWindow):
         self.center_window()
 
         self.event_bus = EventBus()
-        self.audit_logger = AuditLogger(self.event_bus)
+
+        self.audit_signer = None
+        self.audit_logger = None
+        self.audit_event_listener = None
 
         db_path = os.path.join(BASE_DIR, "src", "database", "cryptosafe.db")
         self.db = Database(db_path)
         self.db.initialize()
 
         self.key_manager = KeyManager()
-
         self.config_manager = ConfigManager(db_path, self.key_manager)
 
         encryption_key = self.state.get_key()
         if encryption_key:
             self.key_manager.cache_key(encryption_key)
             print("Ключ шифрования закэширован в KeyManager")
+
+            try:
+                self.audit_signer = AuditLogSigner(self.key_manager)
+
+                audit_connection = sqlite3.connect(db_path)
+                audit_connection.row_factory = sqlite3.Row
+
+                self.audit_logger = AuditLogger(
+                    db_connection=None,
+                    signer=self.audit_signer,
+                    config={'async_logging': True}
+                )
+
+                self.audit_event_listener = AuditEventListener(
+                    event_bus=self.event_bus,
+                    audit_logger=self.audit_logger
+                )
+
+                if hasattr(self.state, 'current_user') and self.state.current_user:
+                    self.audit_event_listener.set_current_user(self.state.current_user)
+
+                print("[AUDIT] Audit system initialized")
+            except Exception as e:
+                print(f"[AUDIT] Failed to initialize: {e}")
         else:
-            QMessageBox.critical(self, "Ошибка", "Не удалось получить ключ шифрования")
-            sys.exit(1)
+            print("[WARNING] Ключ шифрования не найден в state")
+
+        if self.audit_signer:
+            self.audit_verifier = LogVerifier(self.db, self.audit_signer)
+            self._verify_audit_logs_on_startup()
+        else:
+            self.audit_verifier = LogVerifier(self.db, None)
 
         self.encryption_service = VaultEncryptionService(self.key_manager)
 
@@ -153,6 +194,10 @@ class CryptoSafeApp(QMainWindow):
         self.timer = QTimer()
         self.timer.timeout.connect(self.check_session_timeout)
         self.timer.start(60000)
+
+        self.periodic_verification_timer = QTimer()
+        self.periodic_verification_timer.timeout.connect(self._periodic_audit_check)
+        self.periodic_verification_timer.start(24 * 60 * 60 * 1000)
 
         self.clipboard_settings = ClipboardSettings(self.config_manager)
         self.clipboard_settings.add_default_settings()
@@ -183,12 +228,10 @@ class CryptoSafeApp(QMainWindow):
 
         self.clipboard_monitor.start_monitoring()
 
-        # UI-2: Таймер обратного отсчёта
         self.clipboard_status_timer = QTimer()
         self.clipboard_status_timer.timeout.connect(self._update_clipboard_status)
         self.clipboard_status_timer.start(1000)
 
-        # UI-2: Системный трей
         self._create_tray_icon()
 
         print("[APP] Сервис буфера обмена инициализирован")
@@ -204,6 +247,17 @@ class CryptoSafeApp(QMainWindow):
             print(f"[APP] Загружены настройки буфера: таймаут={timeout}с, уровень={security_level}")
         except Exception as e:
             print(f"[APP] Ошибка загрузки настроек буфера: {e}")
+
+    def _verify_audit_logs_on_startup(self):
+        try:
+            result = self.audit_verifier.verify_integrity()
+
+            if not result['verified']:
+                self.handle_tampering_detected(result, source="startup")
+            else:
+                print(f"[VER-1] Audit log OK ({result.get('total_entries', 0)} entries)")
+        except Exception as e:
+            print(f"[VER-1] Startup verification failed: {e}")
 
     def _update_clipboard_status(self):
         if hasattr(self, 'clipboard_service'):
@@ -560,7 +614,14 @@ class CryptoSafeApp(QMainWindow):
         logs_action = QAction("Логи", self)
         logs_action.triggered.connect(self.open_audit_logs)
         view_menu.addAction(logs_action)
-        settings_action = QAction("Настройки", self)
+
+        verify_logs_action = QAction("Проверить целостность логов", self)
+        verify_logs_action.triggered.connect(self.manual_audit_verification)
+        view_menu.addAction(verify_logs_action)
+
+        view_menu.addSeparator()
+
+        settings_action = QAction("Настройки", self)  # ← только один раз
         settings_action.triggered.connect(self.open_settings)
         view_menu.addAction(settings_action)
 
@@ -924,22 +985,25 @@ class CryptoSafeApp(QMainWindow):
         if dialog.exec() == QDialog.DialogCode.Accepted and dialog.success:
             QMessageBox.information(self, "Успех", "Пароль успешно изменен!")
 
-    def open_audit_logs(self):
-        viewer = AuditLogViewer(self)
-        viewer.exec()
-
     def open_settings(self):
         db_path = os.path.join(BASE_DIR, "src", "database", "cryptosafe.db")
         dialog = SettingsDialog(self, db_path=db_path)
 
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            # Перезагружаем настройки буфера обмена
             if hasattr(self, 'clipboard_settings'):
                 self.clipboard_settings.reload()
             if hasattr(self, 'clipboard_service'):
                 self.clipboard_service.reload_settings()
             self.status_bar.showMessage("Настройки применены", 3000)
 
+    def open_audit_logs(self):
+
+        viewer = AuditLogViewer(
+            parent=self,
+            db_connection=self.db,
+            audit_logger=self.audit_logger if hasattr(self, 'audit_logger') else None
+        )
+        viewer.exec()
     def show_about(self):
         QMessageBox.information(
             self,
@@ -1059,6 +1123,232 @@ class CryptoSafeApp(QMainWindow):
             self.status_bar.showMessage("Пароль скопирован в буфер", 2000)
             self.state.update_activity()
 
+    def _periodic_audit_check(self):
+        if not hasattr(self, 'audit_verifier') or not self.audit_verifier:
+            return
+
+        try:
+            result = self.audit_verifier.verify_recent(count=1000)
+
+            if not result['verified']:
+                self.handle_tampering_detected(result, source="periodic")  # ← обновлено
+            else:
+                self.status_bar.showMessage(
+                    f"Audit log integrity check passed ({result.get('total_entries', 0)} entries verified)",
+                    3000
+                )
+        except Exception as e:
+            logger.error(f"Periodic verification failed: {e}")
+
+    def get_audit_integrity_status(self) -> Dict[str, Any]:
+        if not hasattr(self, 'audit_verifier') or not self.audit_verifier:
+            return {'status': 'unknown', 'message': 'Audit verifier not initialized'}
+
+        try:
+            cursor = self.db.execute("SELECT COUNT(*) FROM audit_log")
+            total = cursor.fetchone()[0]
+
+            return {
+                'status': 'ok',
+                'total_entries': total,
+                'last_check': datetime.now().isoformat(),
+                'message': f"{total} log entries"
+            }
+        except Exception as e:
+            return {'status': 'error', 'message': str(e)}
+
+    def manual_audit_verification(self):
+        if not hasattr(self, 'audit_verifier') or not self.audit_verifier:
+            QMessageBox.warning(self, "Ошибка", "Audit verifier не инициализирован")
+            return
+
+        try:
+
+            progress = QProgressDialog("Проверка целостности логов...", "Отмена", 0, 0, self)
+            progress.setWindowTitle("Проверка логов")
+            progress.setModal(True)
+            progress.show()
+
+            result = self.audit_verifier.verify_full_with_report()
+
+            progress.close()
+
+            if not result['verified']:
+                reply = QMessageBox.warning(
+                    self,
+                    "Tampering Detected",
+                    "Audit log tampering has been detected!\n\n"
+                    f"Invalid signatures: {len(result.get('invalid_entries', []))}\n"
+                    f"Chain breaks: {len(result.get('chain_breaks', []))}\n\n"
+                    "Do you want to lock the vault for security?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes
+                )
+
+                if reply == QMessageBox.StandardButton.Yes:
+                    self._lock_vault_due_to_tampering()
+                    return
+
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Результат проверки целостности логов")
+            dialog.setMinimumSize(600, 400)
+
+            layout = QVBoxLayout(dialog)
+
+            text_edit = QTextEdit()
+            text_edit.setPlainText(result['report'])
+            text_edit.setReadOnly(True)
+            layout.addWidget(text_edit)
+
+            close_btn = QPushButton("Закрыть")
+            close_btn.clicked.connect(dialog.accept)
+            layout.addWidget(close_btn)
+
+            export_btn = QPushButton("Экспортировать отчёт")
+
+            def export_report():
+                path, _ = QFileDialog.getSaveFileName(
+                    dialog,
+                    "Сохранить отчёт",
+                    f"audit_verification_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt",
+                    "Text Files (*.txt)"
+                )
+                if path:
+                    with open(path, 'w', encoding='utf-8') as f:
+                        f.write(result['report'])
+                    QMessageBox.information(dialog, "Успех", f"Отчёт сохранён")
+
+            export_btn.clicked.connect(export_report)
+            layout.addWidget(export_btn)
+
+            dialog.exec()
+
+            if hasattr(self, 'audit_logger'):
+                self.audit_logger.log_event(
+                    event_type="SECURITY_MANUAL_VERIFICATION",
+                    severity="INFO" if result['verified'] else "WARN",
+                    source="user.manual_check",
+                    details={
+                        'verified': result['verified'],
+                        'total_entries': result['total_entries'],
+                        'invalid_signatures': len(result.get('invalid_entries', [])),
+                        'chain_breaks': len(result.get('chain_breaks', []))
+                    },
+                    user_id=self.state.get_current_user()
+                )
+
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Manual verification failed: {e}")
+            QMessageBox.critical(self, "Ошибка", f"Не удалось выполнить проверку: {e}")
+
+    def handle_tampering_detected(self, result: Dict[str, Any], source: str = "unknown"):
+
+        if hasattr(self, 'audit_logger'):
+            self.audit_logger.log_event(
+                event_type="SECURITY_TAMPER_DETECTED",
+                severity="CRITICAL",
+                source=f"verification.{source}",
+                details={
+                    'source': source,
+                    'invalid_signatures': len(result.get('invalid_entries', [])),
+                    'chain_breaks': len(result.get('chain_breaks', [])),
+                    'total_entries': result.get('total_entries', 0),
+                    'valid_entries': result.get('valid_entries', 0)
+                },
+                user_id=self.state.get_current_user()
+            )
+
+        message = (
+            " SECURITY ALERT ️\n\n"
+            "Audit log tampering has been detected!\n\n"
+            f"Source: {source}\n"
+            f"Invalid signatures: {len(result.get('invalid_entries', []))}\n"
+            f"Chain breaks: {len(result.get('chain_breaks', []))}\n\n"
+            "This may indicate someone is attempting to hide malicious activities.\n\n"
+        )
+
+        lock_vault = self.config_manager.get_setting('lock_on_tamper_detection', 'true') == 'true'
+
+        if lock_vault:
+            message += "The vault will be LOCKED for security.\n"
+            message += "You will need to re-enter your master password to continue."
+        else:
+            message += "You can continue, but security may be compromised."
+
+        reply = QMessageBox.critical(
+            self,
+            "SECURITY ALERT - Tampering Detected",
+            message,
+            QMessageBox.StandardButton.Ok | QMessageBox.StandardButton.Ignore
+        )
+
+        if lock_vault:
+            self._lock_vault_due_to_tampering()
+
+        self._write_tampering_log(result, source)
+
+    def _lock_vault_due_to_tampering(self):
+        if hasattr(self, 'audit_signer'):
+            self.audit_signer.clear()
+
+        if hasattr(self, 'key_manager'):
+            self.key_manager.clear_cache()
+
+        self.state.end_session()
+
+        self._clear_decrypted_data()
+
+        self.hide()
+
+        login_dialog = LoginDialog(None, self.auth, self.state)
+
+        if login_dialog.exec() == QDialog.DialogCode.Accepted and login_dialog.success:
+            encryption_key = self.state.get_key()
+            if encryption_key:
+                self.key_manager.cache_key(encryption_key)
+
+                username = login_dialog.auth.get_username()
+                self.audit_event_listener.set_current_user(username)
+
+                self.audit_signer = AuditLogSigner(self.key_manager)
+                self.audit_verifier.signer = self.audit_signer
+
+                self.load_entries()
+
+                self.show()
+                self.status_bar.showMessage("Vault unlocked after tampering incident", 5000)
+            else:
+                QMessageBox.critical(self, "Ошибка", "Не удалось восстановить ключ шифрования")
+                self._force_exit()
+        else:
+            self._force_exit()
+
+    def _write_tampering_log(self, result: Dict[str, Any], source: str):
+
+        log_dir = os.path.join(BASE_DIR, "logs")
+        os.makedirs(log_dir, exist_ok=True)
+
+        log_file = os.path.join(log_dir, "security_events.log")
+
+        event = {
+            'timestamp': datetime.now().isoformat(),
+            'event_type': 'TAMPERING_DETECTED',
+            'source': source,
+            'details': {
+                'invalid_signatures': len(result.get('invalid_entries', [])),
+                'chain_breaks': len(result.get('chain_breaks', [])),
+                'invalid_entries': result.get('invalid_entries', [])[:10],  # первые 10
+                'chain_breaks_details': result.get('chain_breaks', [])[:10]
+            }
+        }
+
+        try:
+            with open(log_file, 'a', encoding='utf-8') as f:
+                f.write(json.dumps(event, ensure_ascii=False) + '\n')
+        except Exception as e:
+            print(f"Failed to write tampering log: {e}")
 
 def main():
     print("CryptoSafe Manager - Запуск")

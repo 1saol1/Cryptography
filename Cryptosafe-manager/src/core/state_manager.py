@@ -14,8 +14,9 @@ class StateManager:
         self.logged_in = False
         self.key_manager = key_manager
 
-    def start_session(self, key: bytes):
+    def start_session(self, key: bytes, user: str = None):
         self.encryption_key = key
+        self.current_user = user
         self.login_time = time.time()
         self.last_activity = time.time()
         self.is_locked = False
@@ -29,6 +30,9 @@ class StateManager:
         if self.is_active():
             return self.encryption_key
         return None
+
+    def get_current_user(self) -> Optional[str]:
+        return self.current_user
 
     def is_active(self):
         if self.encryption_key is None:
