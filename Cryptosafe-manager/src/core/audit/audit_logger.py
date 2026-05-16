@@ -81,70 +81,75 @@ class LogEntry:
 
 
 class AuditLogger:
-
-    def __init__(self, db_connection: Optional[sqlite3.Connection], signer, config: Dict[str, Any]):
-        self.external_connection = db_connection
+    def __init__(self, db_path: str, signer, config: Dict[str, Any]):
+        self.db_path = db_path
         self.signer = signer
-        self.config = config
-        self._async_queue: List[LogEntry] = []
+        self.config = config or {}
         self._lock = threading.Lock()
 
-        if self.external_connection is None:
-            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-            self.db_path = os.path.join(base_dir, "src", "database", "cryptosafe.db")
-        else:
-            self.db_path = None
+        # Создаём ПОСТОЯННОЕ соединение
+        self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
+        self._conn.row_factory = sqlite3.Row
 
         self._init_log_structure()
 
-    def _get_connection(self):
-        if self.external_connection is not None:
-            return self.external_connection
-
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    def _close_connection(self, conn):
-        if self.external_connection is None and conn is not None:
-            conn.close()
-
     def _init_log_structure(self):
-        conn = self._get_connection()
-        try:
-            cursor = conn.execute("SELECT COUNT(*) FROM audit_log")
-            count = cursor.fetchone()[0]
+        cursor = self._conn.execute("SELECT COUNT(*) FROM audit_log")
+        count = cursor.fetchone()[0]
 
-            if count == 0:
-                self._create_genesis_entry()
-                logger.info("Audit log initialized with genesis entry")
-        finally:
-            self._close_connection(conn)
+        if count == 0:
+            self._create_genesis_entry()
+            logger.info("Audit log initialized with genesis entry")
 
     def _create_genesis_entry(self):
-        genesis_entry = LogEntry(
-            timestamp=datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
-            event_type=EventType.SYSTEM_GENESIS.value,
-            severity=EventSeverity.INFO.value,
-            user_id='system',
-            source='audit_logger',
-            details={'message': 'Audit log initialized'},
-            sequence_number=0,
-            previous_hash='0' * 64
-        )
-        self._write_entry(genesis_entry)
+        """Создаёт genesis-запись"""
+        try:
+            # Проверяем, есть ли уже genesis
+            cursor = self._conn.execute(
+                "SELECT COUNT(*) FROM audit_log WHERE sequence_number = 0"
+            )
+            if cursor.fetchone()[0] > 0:
+                logger.info("✅ Genesis entry уже существует")
+                return
 
-    def _get_next_sequence(self, conn) -> int:
-        cursor = conn.execute("SELECT MAX(sequence_number) FROM audit_log")
-        max_seq = cursor.fetchone()[0]
-        return (max_seq or -1) + 1
+            genesis_entry = LogEntry(
+                timestamp=datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+                event_type=EventType.SYSTEM_GENESIS.value,
+                severity=EventSeverity.INFO.value,
+                user_id='system',
+                source='audit_logger',
+                details={'message': 'Audit log initialized - Genesis block'},
+                sequence_number=0,
+                previous_hash='0' * 64
+            )
 
-    def _get_latest_hash(self, conn) -> str:
-        cursor = conn.execute(
-            "SELECT entry_hash FROM audit_log ORDER BY sequence_number DESC LIMIT 1"
-        )
-        row = cursor.fetchone()
-        return row[0] if row else '0' * 64
+            self._write_entry(genesis_entry)
+            logger.info("✅ Genesis entry успешно создан (sequence=0)")
+
+        except Exception as e:
+            logger.error(f"Error creating genesis entry: {e}")
+            print(f"Error creating genesis entry: {e}")
+
+    def _get_next_sequence(self) -> int:
+        try:
+            cursor = self._conn.execute("SELECT MAX(sequence_number) FROM audit_log")
+            max_seq = cursor.fetchone()[0]
+            if max_seq is None:
+                return 0
+            return max_seq + 1
+        except Exception as e:
+            logger.error(f"Error getting next sequence: {e}")
+            return 1
+
+    def _get_latest_hash(self) -> str:
+        try:
+            cursor = self._conn.execute(
+                "SELECT entry_hash FROM audit_log ORDER BY sequence_number DESC LIMIT 1"
+            )
+            row = cursor.fetchone()
+            return row[0] if row else '0' * 64
+        except Exception:
+            return '0' * 64
 
     def _sanitize_details(self, details: Dict[str, Any]) -> Dict[str, Any]:
         if not details:
@@ -176,45 +181,31 @@ class AuditLogger:
             user_id: Optional[str] = None,
             entry_id: Optional[str] = None
     ):
-        conn = self._get_connection()
-        try:
-            previous_hash = self._get_latest_hash(conn)
-            sequence_number = self._get_next_sequence(conn)
-        finally:
-            self._close_connection(conn)
-
-        entry = LogEntry(
-            timestamp=datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
-            event_type=event_type,
-            severity=severity,
-            user_id=user_id or 'anonymous',
-            source=source,
-            details=self._sanitize_details(details),
-            sequence_number=sequence_number,
-            previous_hash=previous_hash,
-            entry_id=entry_id
-        )
-
-        if self.config.get('async_logging', True):
-            self._async_log(entry)
-        else:
-            self._write_entry(entry)
-
-    def _async_log(self, entry: LogEntry):
         with self._lock:
-            self._async_queue.append(entry)
-            # Если очередь большая, можно сразу записать
-            if len(self._async_queue) > 10:
-                self.flush_async_queue()
+            try:
+                previous_hash = self._get_latest_hash()
+                sequence_number = self._get_next_sequence()  # ← исправлено
 
-    def flush_async_queue(self):
-        with self._lock:
-            for entry in self._async_queue:
+                entry = LogEntry(
+                    timestamp=datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z'),
+                    event_type=event_type,
+                    severity=severity,
+                    user_id=user_id or 'anonymous',
+                    source=source,
+                    details=self._sanitize_details(details),
+                    sequence_number=sequence_number,
+                    previous_hash=previous_hash,
+                    entry_id=entry_id
+                )
+
                 self._write_entry(entry)
-            self._async_queue.clear()
+                print(f"[AUDIT] Event logged: {event_type} (seq={sequence_number})")
+
+            except Exception as e:
+                print(f"[DEBUG] Error in log_event: {e}")
+                logger.error(f"Failed to log event: {e}")
 
     def _write_entry(self, entry: LogEntry):
-        conn = self._get_connection()
         try:
             entry_dict = entry.to_dict()
             entry_json = json.dumps(entry_dict, sort_keys=True, default=str)
@@ -222,32 +213,55 @@ class AuditLogger:
             signature = self.signer.sign(entry_json.encode())
             entry_data_blob = entry_json.encode('utf-8')
 
-            conn.execute(
+            self._conn.execute(
                 """
-                INSERT INTO audit_log
-                (sequence_number, previous_hash, event_type, entry_data, entry_hash, signature, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO audit_log 
+                (sequence_number, previous_hash, event_type, severity, user_id, source, 
+                 entry_data, entry_hash, signature, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     entry.sequence_number,
                     entry.previous_hash,
                     entry.event_type,
+                    entry.severity,
+                    entry.user_id,
+                    entry.source,
                     entry_data_blob,
                     entry_hash,
                     signature.hex(),
                     entry.timestamp
                 )
             )
-            conn.commit()
+            self._conn.commit()
+            print(f"[AUDIT] Запись успешно добавлена | seq={entry.sequence_number} | {entry.event_type}")
+
         except Exception as e:
-            logger.error(f"Failed to write audit entry: {e}")
-        finally:
-            self._close_connection(conn)
+            print(f"[DEBUG] Error writing entry: {e}")
+            logger.error(f"Failed to write entry: {e}")
+            raise
 
     def get_entry_count(self) -> int:
-        conn = self._get_connection()
-        try:
-            cursor = conn.execute("SELECT COUNT(*) FROM audit_log")
-            return cursor.fetchone()[0]
-        finally:
-            self._close_connection(conn)
+        cursor = self._conn.execute("SELECT COUNT(*) FROM audit_log")
+        return cursor.fetchone()[0]
+
+    def close(self):
+        if self._conn:
+            self._conn.close()
+
+    def log_error(self, error_type: str, error_msg: str):
+        if hasattr(self, 'event_bus'):
+            self.event_bus.publish("AuditError", {
+                'error_type': error_type,
+                'error_msg': error_msg
+            })
+
+        self.log_event(
+            event_type="SECURITY_AUDIT_ERROR",
+            severity="ERROR",
+            source="audit.system",
+            details={
+                'error_type': error_type,
+                'error_msg': error_msg
+            }
+        )

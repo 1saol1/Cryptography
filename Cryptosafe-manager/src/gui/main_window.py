@@ -147,15 +147,21 @@ class CryptoSafeApp(QMainWindow):
                 audit_connection = sqlite3.connect(db_path)
                 audit_connection.row_factory = sqlite3.Row
 
+                db_path = os.path.join(BASE_DIR, "src", "database", "cryptosafe.db")
+
                 self.audit_logger = AuditLogger(
-                    db_connection=None,
+                    db_path=db_path,
                     signer=self.audit_signer,
-                    config={'async_logging': True}
+                    config={'async_logging': False,
+                            'max_queue_size': 5}
                 )
+
+                db_path = os.path.join(BASE_DIR, "src", "database", "cryptosafe.db")
 
                 self.audit_event_listener = AuditEventListener(
                     event_bus=self.event_bus,
-                    audit_logger=self.audit_logger
+                    audit_logger=self.audit_logger,
+                    db_path = db_path
                 )
 
                 if hasattr(self.state, 'current_user') and self.state.current_user:
@@ -376,7 +382,7 @@ class CryptoSafeApp(QMainWindow):
             error_type = data.get('error_type', 'Unknown')
             error_msg = data.get('error_msg', '')
             print(f"[APP] Аудит ошибки: {error_type} - {error_msg}")
-
+          
     def _on_clear_failed(self, data):
         from PyQt6.QtWidgets import QMessageBox
 
@@ -997,13 +1003,14 @@ class CryptoSafeApp(QMainWindow):
             self.status_bar.showMessage("Настройки применены", 3000)
 
     def open_audit_logs(self):
-
         viewer = AuditLogViewer(
             parent=self,
             db_connection=self.db,
-            audit_logger=self.audit_logger if hasattr(self, 'audit_logger') else None
+            audit_logger=self.audit_logger if hasattr(self, 'audit_logger') else None,
+            verifier=self.audit_verifier if hasattr(self, 'audit_verifier') else None
         )
         viewer.exec()
+
     def show_about(self):
         QMessageBox.information(
             self,
@@ -1349,6 +1356,12 @@ class CryptoSafeApp(QMainWindow):
                 f.write(json.dumps(event, ensure_ascii=False) + '\n')
         except Exception as e:
             print(f"Failed to write tampering log: {e}")
+
+    def highlight_vault_entry(self, entry_id: str):
+        if hasattr(self, 'table'):
+            self.table.highlight_entry(entry_id)
+            self.status_bar.showMessage(f"Найдена запись: {entry_id}", 3000)
+
 
 def main():
     print("CryptoSafe Manager - Запуск")

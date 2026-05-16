@@ -19,9 +19,10 @@ logger = logging.getLogger(__name__)
 
 
 class AuditEventListener:
-    def __init__(self, event_bus: EventBus, audit_logger):
+    def __init__(self, event_bus: EventBus, audit_logger, db_path: str = None):
         self.event_bus = event_bus
         self.audit_logger = audit_logger
+        self.db_path = db_path
         self._current_user_id: Optional[str] = None
         self._register_handlers()
 
@@ -45,6 +46,10 @@ class AuditEventListener:
             self._on_clipboard_protection_enabled
         )
         self.event_bus.subscribe(USER_LOGIN_FAILED, self._on_user_login_failed)
+
+        self.event_bus.subscribe("AuditError", self._on_audit_error)
+        self.event_bus.subscribe("ClipboardMonitoringDisabled", self._on_monitoring_disabled)
+        self.event_bus.subscribe("AUDIT_LOGS_VIEWED", self._on_audit_logs_viewed)
 
         logger.info("AuditEventListener registered all handlers")
 
@@ -175,6 +180,7 @@ class AuditEventListener:
         return "text" if data is not None else "unknown"
 
     def _on_clipboard_copied(self, data: Any):
+        print(f"[DEBUG] _on_clipboard_copied called")
         try:
             content_type = self._extract_clipboard_content_type(data)
 
@@ -189,9 +195,9 @@ class AuditEventListener:
                 },
                 user_id=self._current_user_id
             )
-            logger.debug(f"Audit logged: clipboard copy ({content_type})")
+            print("[DEBUG] log_event called successfully")
         except Exception as e:
-            logger.error(f"Failed to log clipboard copy: {e}")
+            print(f"[DEBUG] Error in _on_clipboard_copied: {e}")
 
     def _on_clipboard_cleared(self, data: Any):
         clear_type = "manual" if data is None else str(data)
@@ -238,3 +244,47 @@ class AuditEventListener:
             user_id=self._current_user_id
         )
         logger.debug("Audit logged: clipboard protection enabled")
+
+    def _on_audit_error(self, data: Any):
+        if not data:
+            return
+
+        error_type = data.get('error_type', 'unknown')
+        error_msg = data.get('error_msg', '')
+
+        self.audit_logger.log_event(
+            event_type="SECURITY_AUDIT_ERROR",
+            severity="ERROR",
+            source="audit.system",
+            details={
+                'error_type': error_type,
+                'error_msg': error_msg
+            },
+            user_id=self._current_user_id
+        )
+        logger.warning(f"Audit error logged: {error_type} - {error_msg}")
+
+    def _on_monitoring_disabled(self, data: Any):
+        reason = data.get('reason', 'unknown') if data else 'unknown'
+
+        self.audit_logger.log_event(
+            event_type="SECURITY_MONITORING_DISABLED",
+            severity="WARN",
+            source="clipboard.monitor",
+            details={
+                'reason': reason,
+                'action': 'monitoring_disabled'
+            },
+            user_id=self._current_user_id
+        )
+        logger.warning(f"Monitoring disabled logged: {reason}")
+
+    def _on_audit_logs_viewed(self, data: Any):
+        self.audit_logger.log_event(
+            event_type="AUDIT_LOGS_VIEWED",
+            severity="INFO",
+            source="gui.audit_viewer",
+            details=data or {},
+            user_id=self._current_user_id
+        )
+        logger.debug("Audit logs viewed logged")

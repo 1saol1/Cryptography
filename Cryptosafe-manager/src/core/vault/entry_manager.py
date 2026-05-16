@@ -66,12 +66,10 @@ class EntryManager:
         totp_secret = data.get('totp_secret', '')
         share_metadata = data.get('share_metadata', '')
 
-        # ДОБАВЬТЕ ЭТУ СТРОКУ - получаем значение allow_copy (по умолчанию True)
         allow_copy = 1 if data.get('allow_copy', True) else 0
         print(f"DEBUG: create_entry allow_copy = {allow_copy}")  # ВРЕМЕННЫЙ PRINT
 
         try:
-            # ИЗМЕНИТЕ INSERT запрос - добавьте allow_copy
             self.db.execute(
                 """INSERT INTO vault_entries 
                    (id, encrypted_data, created_at, updated_at, tags, totp_secret, share_metadata, allow_copy) 
