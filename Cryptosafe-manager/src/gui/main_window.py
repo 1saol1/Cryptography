@@ -382,7 +382,7 @@ class CryptoSafeApp(QMainWindow):
             error_type = data.get('error_type', 'Unknown')
             error_msg = data.get('error_msg', '')
             print(f"[APP] Аудит ошибки: {error_type} - {error_msg}")
-          
+
     def _on_clear_failed(self, data):
         from PyQt6.QtWidgets import QMessageBox
 

@@ -24,7 +24,7 @@ class LogFormatter:
             export_data = {
                 'metadata': {
                     'export_timestamp': datetime.now().isoformat(),
-                    'exporter': 'CryptoSafe Manager',
+                    'import_export': 'CryptoSafe Manager',
                     'version': '1.0',
                     'total_entries': len(entries),
                     'date_range': export_range or {}
