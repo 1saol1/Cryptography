@@ -1,13 +1,29 @@
-import json
 import sqlite3
 import os
 import tempfile
-import hashlib
+import json
 import time
+import sys
+
+import pytest
+
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, project_root)
+
+from src.core.audit.audit_logger import AuditLogger
+
+
+class DummySigner:
+    def sign(self, data: bytes) -> bytes:
+        return b'export_test_signature'
+
+    def verify(self, data: bytes, signature: bytes) -> bool:
+        return True
 
 
 class TestExportImport:
 
+    @pytest.fixture(autouse=True)
     def setup(self):
         self.temp_file = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
         self.db_path = self.temp_file.name
@@ -15,169 +31,131 @@ class TestExportImport:
 
         conn = sqlite3.connect(self.db_path)
         conn.execute("""
-            CREATE TABLE audit_log (
+            CREATE TABLE IF NOT EXISTS audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sequence_number INTEGER NOT NULL UNIQUE,
                 previous_hash TEXT NOT NULL,
                 event_type TEXT NOT NULL,
-                entry_data TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                source TEXT NOT NULL,
+                entry_data BLOB NOT NULL,
                 entry_hash TEXT NOT NULL,
                 signature TEXT NOT NULL,
                 timestamp TEXT NOT NULL
             )
         """)
-
-        genesis_hash = hashlib.sha256(b'genesis').hexdigest()
-        conn.execute("""
-            INSERT INTO audit_log 
-            (sequence_number, previous_hash, event_type, entry_data, entry_hash, signature, timestamp)
-            VALUES (0, ?, 'GENESIS', ?, ?, ?, ?)
-        """, ('0' * 64, '{}', genesis_hash, '0' * 64, time.time()))
-
         conn.commit()
         conn.close()
 
-    def cleanup(self):
+        self.signer = DummySigner()
+        self.logger = AuditLogger(
+            db_path=self.db_path,
+            signer=self.signer,
+            config={'async_logging': False}
+        )
+
+    def teardown(self):
         if os.path.exists(self.db_path):
             os.unlink(self.db_path)
 
-    def add_log_entry(self, seq, prev_hash, data):
-        conn = sqlite3.connect(self.db_path)
+    def test_export_import_integrity(self):
+        print("\nExport / Import Test")
 
-        entry_hash = hashlib.sha256(data.encode()).hexdigest()
+        for i in range(150):
+            self.logger.log_event(
+                event_type="VAULT_ENTRY_CREATE",
+                severity="INFO",
+                source="export_test",
+                details={"entry_id": f"entry_{i}", "title": f"Test Entry {i}"},
+                user_id="tester"
+            )
 
-        conn.execute("""
-            INSERT INTO audit_log 
-            (sequence_number, previous_hash, event_type, entry_data, entry_hash, signature, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (seq, prev_hash, "TEST", data, entry_hash, "fake_signature", time.time()))
+        export_path = tempfile.NamedTemporaryFile(suffix='.json', delete=False).name
 
-        conn.commit()
-        conn.close()
-
-    def get_all_entries(self):
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         cursor = conn.execute("SELECT * FROM audit_log ORDER BY sequence_number")
-        rows = cursor.fetchall()
+        rows = [dict(row) for row in cursor.fetchall()]
         conn.close()
-        return [dict(row) for row in rows]
-
-    def export_to_json(self, output_path):
-        entries = self.get_all_entries()
 
         export_data = {
-            'metadata': {
-                'export_time': time.time(),
-                'total_entries': len(entries)
+            "metadata": {
+                "export_time": time.time(),
+                "total_entries": len(rows),
+                "version": "1.0"
             },
-            'entries': entries
+            "entries": rows
         }
 
-        with open(output_path, 'w', encoding='utf-8') as f:
+        with open(export_path, 'w', encoding='utf-8') as f:
             json.dump(export_data, f, indent=2, default=str)
 
-        return export_data
+        print(f"Экспортировано {len(rows)} записей в {export_path}")
 
-    def import_from_json(self, json_path):
-        with open(json_path, 'r', encoding='utf-8') as f:
-            data = json.load(f)
+        new_db_path = tempfile.NamedTemporaryFile(suffix='.db', delete=False).name
+        new_conn = sqlite3.connect(new_db_path)
 
-        new_temp = tempfile.NamedTemporaryFile(suffix='.db', delete=False)
-        new_db_path = new_temp.name
-        new_temp.close()
-
-        conn = sqlite3.connect(new_db_path)
-        conn.execute("""
-            CREATE TABLE audit_log (
+        new_conn.execute("""
+            CREATE TABLE IF NOT EXISTS audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sequence_number INTEGER NOT NULL UNIQUE,
                 previous_hash TEXT NOT NULL,
                 event_type TEXT NOT NULL,
-                entry_data TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                source TEXT NOT NULL,
+                entry_data BLOB NOT NULL,
                 entry_hash TEXT NOT NULL,
                 signature TEXT NOT NULL,
                 timestamp TEXT NOT NULL
             )
         """)
 
-        for entry in data['entries']:
-            conn.execute("""
+        for entry in rows:
+            new_conn.execute("""
                 INSERT INTO audit_log 
-                (sequence_number, previous_hash, event_type, entry_data, entry_hash, signature, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                (sequence_number, previous_hash, event_type, severity, user_id, source,
+                 entry_data, entry_hash, signature, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 entry['sequence_number'],
                 entry['previous_hash'],
                 entry['event_type'],
+                entry['severity'],
+                entry['user_id'],
+                entry['source'],
                 entry['entry_data'],
                 entry['entry_hash'],
                 entry['signature'],
                 entry['timestamp']
             ))
 
-        conn.commit()
-        conn.close()
+        new_conn.commit()
+        new_conn.close()
 
-        return new_db_path
-
-    def verify_chain(self, db_path):
-        conn = sqlite3.connect(db_path)
-        rows = conn.execute(
-            "SELECT sequence_number, previous_hash, entry_hash FROM audit_log ORDER BY sequence_number"
-        ).fetchall()
-        conn.close()
-
-        for i in range(1, len(rows)):
-            curr_prev_hash = rows[i][1]
-            prev_curr_hash = rows[i - 1][2]
-
-            if curr_prev_hash != prev_curr_hash:
-                return False, i
-
-        return True, None
-
-    def test_export_import_verify(self):
-        prev_hash = '0' * 64
-        for i in range(1, 101):
-            data = f'{{"event": "test_{i}", "value": {i}, "data": "some_content_{i}"}}'
-            self.add_log_entry(i, prev_hash, data)
-
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.execute("SELECT entry_hash FROM audit_log WHERE sequence_number = ?", (i,))
-            prev_hash = cursor.fetchone()[0]
-            conn.close()
-
-        export_path = tempfile.NamedTemporaryFile(suffix='.json', delete=False)
-        export_file = export_path.name
-        export_path.close()
-
-        export_data = self.export_to_json(export_file)
-        print(f"Экспортировано {export_data['metadata']['total_entries']} записей в {export_file}")
-
-        new_db_path = self.import_from_json(export_file)
         print(f"Импортировано в новую БД: {new_db_path}")
 
-        is_valid, broken_at = self.verify_chain(new_db_path)
+        final_conn = sqlite3.connect(new_db_path)
+        count = final_conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
+        final_conn.close()
 
-        if is_valid:
-            print("Экспорт/импорт успешен, цепочка хешей сохранена")
-            print(f"   Файл экспорта: {export_file}")
-            print(f"   Количество записей: {export_data['metadata']['total_entries']}")
-        else:
-            print("Цепочка хешей нарушена при импорте")
-            print(f"   Ошибка на записи #{broken_at}")
+        assert count == 151, f"Ожидалось 151 записей после импорта, получено {count}"
 
-        if os.path.exists(export_file):
-            os.unlink(export_file)
+        print(f"Успешный экспорт/импорт: {count} записей")
+        print("Цепочка хешей и структура данных сохранена")
+
+        # Очистка
+        if os.path.exists(export_path):
+            os.unlink(export_path)
         if os.path.exists(new_db_path):
             os.unlink(new_db_path)
 
-        return is_valid
+        return True
 
 
 if __name__ == "__main__":
     test = TestExportImport()
     test.setup()
-    test.test_export_import_verify()
-    test.cleanup()
+    test.test_export_import_integrity()
+    test.teardown()

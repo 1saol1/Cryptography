@@ -67,7 +67,6 @@ class EntryManager:
         share_metadata = data.get('share_metadata', '')
 
         allow_copy = 1 if data.get('allow_copy', True) else 0
-        print(f"DEBUG: create_entry allow_copy = {allow_copy}")  # ВРЕМЕННЫЙ PRINT
 
         try:
             self.db.execute(
@@ -183,12 +182,9 @@ class EntryManager:
         else:
             tags_json = '[]'
 
-        # ДОБАВЬТЕ ЭТУ СТРОКУ - получаем значение allow_copy
         allow_copy = 1 if new_data.get('allow_copy', updated_data.get('allow_copy', True)) else 0
-        print(f"DEBUG: update_entry allow_copy = {allow_copy}")  # ВРЕМЕННЫЙ PRINT
 
         try:
-            # ИЗМЕНИТЕ UPDATE запрос - добавьте allow_copy
             self.db.execute(
                 """UPDATE vault_entries 
                    SET encrypted_data = ?, 

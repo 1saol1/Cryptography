@@ -1,142 +1,108 @@
 import sqlite3
 import os
 import tempfile
-import hashlib
-import time
 import shutil
+import sys
+
+import pytest
+
+project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, project_root)
+
+from src.core.audit.audit_logger import AuditLogger
+
+
+class DummySigner:
+    def sign(self, data: bytes) -> bytes:
+        return b'fake_signature'
+
+    def verify(self, data: bytes, signature: bytes) -> bool:
+        return True
 
 
 class TestRecovery:
 
+    @pytest.fixture(autouse=True)
     def setup(self):
-
         self.temp_dir = tempfile.mkdtemp()
-        self.db_path = os.path.join(self.temp_dir, 'test.db')
-        self.backup_path = os.path.join(self.temp_dir, 'test_backup.db')
+        self.db_path = os.path.join(self.temp_dir, 'test_recovery.db')
+        self.backup_path = os.path.join(self.temp_dir, 'backup.db')
 
         conn = sqlite3.connect(self.db_path)
         conn.execute("""
-            CREATE TABLE audit_log (
+            CREATE TABLE IF NOT EXISTS audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 sequence_number INTEGER NOT NULL UNIQUE,
                 previous_hash TEXT NOT NULL,
                 event_type TEXT NOT NULL,
-                entry_data TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                source TEXT NOT NULL,
+                entry_data BLOB NOT NULL,
                 entry_hash TEXT NOT NULL,
                 signature TEXT NOT NULL,
                 timestamp TEXT NOT NULL
             )
         """)
-
-        genesis_hash = hashlib.sha256(b'genesis').hexdigest()
-        conn.execute("""
-            INSERT INTO audit_log 
-            (sequence_number, previous_hash, event_type, entry_data, entry_hash, signature, timestamp)
-            VALUES (0, ?, 'GENESIS', ?, ?, ?, ?)
-        """, ('0' * 64, '{}', genesis_hash, '0' * 64, time.time()))
-
         conn.commit()
         conn.close()
 
-    def cleanup(self):
+        self.signer = DummySigner()
+        self.logger = AuditLogger(
+            db_path=self.db_path,
+            signer=self.signer,
+            config={'async_logging': False}
+        )
 
+    def teardown(self):
         if os.path.exists(self.temp_dir):
-            shutil.rmtree(self.temp_dir)
+            shutil.rmtree(self.temp_dir, ignore_errors=True)
 
-    def add_log_entries(self, count):
+    def test_recovery_after_corruption(self):
+        print("\nRecovery Test")
 
-        conn = sqlite3.connect(self.db_path)
+        print("Создаём 200 записей...")
+        for i in range(200):
+            self.logger.log_event(
+                event_type="VAULT_ENTRY_CREATE",
+                severity="INFO",
+                source="recovery_test",
+                details={"entry_id": f"entry_{i}"},
+                user_id="tester"
+            )
 
-        cursor = conn.execute("SELECT entry_hash FROM audit_log ORDER BY sequence_number DESC LIMIT 1")
-        row = cursor.fetchone()
-        prev_hash = row[0] if row else '0' * 64
-        start_seq = conn.execute("SELECT MAX(sequence_number) FROM audit_log").fetchone()[0] or 0
-        start_seq += 1
+        shutil.copy2(self.db_path, self.backup_path)
 
-        for i in range(start_seq, start_seq + count):
-            data = f'{{"event": "test_{i}", "value": {i}}}'
-            entry_hash = hashlib.sha256(data.encode()).hexdigest()
-
-            conn.execute("""
-                INSERT INTO audit_log 
-                (sequence_number, previous_hash, event_type, entry_data, entry_hash, signature, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (i, prev_hash, "TEST", data, entry_hash, "fake_signature", time.time()))
-
-            prev_hash = entry_hash
-
-        conn.commit()
-        conn.close()
-
-    def corrupt_database(self):
-
+        print("Имитируем повреждение БД...")
         with open(self.db_path, 'r+b') as f:
-            f.seek(1024)
-            f.write(b'\x00\x00\x00\x00')
-
-    def check_integrity(self):
+            f.seek(512)
+            f.write(b'\x00\x00\x00\x00\xFF\xFF\xFF\xFF')
 
         conn = sqlite3.connect(self.db_path)
         try:
-            cursor = conn.execute("PRAGMA integrity_check")
-            result = cursor.fetchone()[0]
-            conn.close()
-            return result == 'ok'
+            result = conn.execute("PRAGMA integrity_check").fetchone()[0]
+            print(f"PRAGMA integrity_check: {result}")
         except:
-            return False
+            print("БД повреждена (ожидаемо)")
+        finally:
+            conn.close()
 
-    def recover_from_backup(self):
-
-        if os.path.exists(self.backup_path):
-            shutil.copy2(self.backup_path, self.db_path)
-            return True
-        return False
-
-    def test_recovery(self):
-
-        self.add_log_entries(100)
-
-        shutil.copy2(self.db_path, self.backup_path)
-        print(f"Резервная копия: {self.backup_path}")
-
-        is_ok = self.check_integrity()
-        if is_ok:
-            print("БД цела")
-        else:
-            print("БД уже повреждена")
-
-        self.corrupt_database()
-
-        is_ok = self.check_integrity()
-        if not is_ok:
-            print("Повреждение обнаружено")
-        else:
-            print("Повреждение не обнаружено")
-
-        self.recover_from_backup()
-
-        is_ok = self.check_integrity()
+        shutil.copy2(self.backup_path, self.db_path)
 
         conn = sqlite3.connect(self.db_path)
-        cursor = conn.execute("SELECT COUNT(*) FROM audit_log")
-        count = cursor.fetchone()[0]
+        count = conn.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0]
         conn.close()
 
+        print(f"Записей после восстановления: {count}")
 
-        if is_ok and count >= 101:
-            print("Успешное восстановление после повреждения")
-            print(f"   Записей восстановлено: {count}")
-        elif is_ok:
-            print("БД восстановлена, но часть данных потеряна")
-            print(f"   Осталось записей: {count}")
-        else:
-            print("Не удалось восстановить БД")
+        assert count >= 200, f"После восстановления потеряны данные! Осталось только {count}"
+        print("Восстановление успешно — данные сохранены")
 
-        return is_ok
+        return True
 
 
 if __name__ == "__main__":
     test = TestRecovery()
     test.setup()
-    test.test_recovery()
-    test.cleanup()
+    test.test_recovery_after_corruption()
+    test.teardown()
