@@ -37,6 +37,9 @@ class JSONHandler:
                                  signature: Optional[bytes] = None) -> Dict[str, Any]:
 
 
+        import hashlib
+        data_hash = hashlib.sha256(encrypted_data_bytes).hexdigest()
+
         package = {
             "version": "1.0",
             "cryptosafe_export": True,
@@ -44,6 +47,7 @@ class JSONHandler:
             "encryption": encryption_info,
             "data": base64.b64encode(encrypted_data_bytes).decode('ascii'),
             "integrity": {
+                "hash": data_hash,
                 "hash_algorithm": "SHA256"
             }
         }
@@ -55,6 +59,7 @@ class JSONHandler:
 
     @staticmethod
     def parse_encrypted_package(package: Dict[str, Any]) -> tuple:
+        import hashlib
 
         if not package.get("cryptosafe_export"):
             raise ValueError("Not a valid CryptoSafe export file")
@@ -62,5 +67,13 @@ class JSONHandler:
         encrypted_data = base64.b64decode(package["data"])
         encryption_info = package.get("encryption", {})
         integrity_info = package.get("integrity", {})
+
+        expected_hash = integrity_info.get("hash")
+        if expected_hash:
+            actual_hash = hashlib.sha256(encrypted_data).hexdigest()
+            if actual_hash != expected_hash:
+                raise ValueError(
+                    "Integrity check failed — file may be corrupted or tampered"
+                )
 
         return encrypted_data, encryption_info, integrity_info

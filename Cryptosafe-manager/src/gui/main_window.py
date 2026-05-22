@@ -41,6 +41,16 @@ from src.gui.widgets.clipboard_preview import ClipboardPreviewWidget
 from src.core.vault.entry_manager import EntryManager
 from src.gui.widgets.entry_dialog import EntryDialog
 
+# Sprint 6: Импорт/Экспорт, Шеринг, QR
+from src.gui.widgets.export_dialog import ExportDialog
+from src.gui.widgets.import_dialog import ImportDialog
+from src.gui.widgets.sharing_dialog import SharingDialog
+from src.gui.widgets.qr_viewer import QRViewerDialog
+from src.core.import_export.exporter import VaultExporter
+from src.core.import_export.importer import VaultImporter
+from src.core.import_export.sharing_service import SharingService
+from src.core.import_export.key_exchange import QRCodeService
+
 from src.core.audit.log_verifier import LogVerifier
 from src.core.audit.log_signer import AuditLogSigner
 from src.core.audit.audit_event_listener import AuditEventListener
@@ -187,6 +197,27 @@ class CryptoSafeApp(QMainWindow):
             auth_service=self.auth,
             event_system=self.event_bus
         )
+
+        # Sprint 6: Инициализация сервисов импорта/экспорта/шеринга
+        self.vault_exporter = VaultExporter(
+            entry_manager=self.entry_manager,
+            key_manager=self.key_manager,
+            auth_service=self.auth,
+            audit_logger=self.audit_logger
+        )
+        self.vault_importer = VaultImporter(
+            entry_manager=self.entry_manager,
+            key_manager=self.key_manager,
+            audit_logger=self.audit_logger
+        )
+        self.sharing_service = SharingService(
+            db_connection=self.db.get_connection(),
+            crypto_service=self.encryption_service,
+            key_manager=self.key_manager,
+            audit_logger=self.audit_logger,
+            entry_manager=self.entry_manager
+        )
+        self.qr_service = QRCodeService()
 
         self.create_menu()
         self.create_main_table()
@@ -630,6 +661,32 @@ class CryptoSafeApp(QMainWindow):
         settings_action = QAction("Настройки", self)  # ← только один раз
         settings_action.triggered.connect(self.open_settings)
         view_menu.addAction(settings_action)
+
+        # Sprint 6: Меню импорта/экспорта
+        ie_menu = menubar.addMenu("Импорт/Экспорт")
+
+        export_action = QAction("Экспорт хранилища...", self)
+        export_action.setShortcut(QKeySequence("Ctrl+E"))
+        export_action.triggered.connect(self.open_export_dialog)
+        ie_menu.addAction(export_action)
+
+        import_action = QAction("Импорт записей...", self)
+        import_action.setShortcut(QKeySequence("Ctrl+I"))
+        import_action.triggered.connect(self.open_import_dialog)
+        ie_menu.addAction(import_action)
+
+        ie_menu.addSeparator()
+
+        share_action = QAction("Поделиться записью...", self)
+        share_action.setShortcut(QKeySequence("Ctrl+Shift+S"))
+        share_action.triggered.connect(self.open_sharing_dialog)
+        ie_menu.addAction(share_action)
+
+        ie_menu.addSeparator()
+
+        qr_action = QAction("Показать QR-код публичного ключа...", self)
+        qr_action.triggered.connect(self.open_qr_viewer)
+        ie_menu.addAction(qr_action)
 
         help_menu = menubar.addMenu("Справка")
         about_action = QAction("О программе", self)
@@ -1356,6 +1413,81 @@ class CryptoSafeApp(QMainWindow):
                 f.write(json.dumps(event, ensure_ascii=False) + '\n')
         except Exception as e:
             print(f"Failed to write tampering log: {e}")
+
+    # ==================== Sprint 6: Импорт / Экспорт / Шеринг / QR ====================
+
+    def open_export_dialog(self):
+        """UI-1: Открыть диалог экспорта хранилища."""
+        if not self.state.is_active():
+            QMessageBox.warning(self, "Доступ запрещён", "Сначала войдите в хранилище.")
+            return
+        dialog = ExportDialog(self, self.entry_manager, self.vault_exporter)
+        dialog.exec()
+
+    def open_import_dialog(self):
+        """UI-2: Открыть диалог импорта записей."""
+        if not self.state.is_active():
+            QMessageBox.warning(self, "Доступ запрещён", "Сначала войдите в хранилище.")
+            return
+        dialog = ImportDialog(self, self.entry_manager, self.vault_importer)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.load_entries()
+            self.status_bar.showMessage("Импорт завершён", 4000)
+
+    def open_sharing_dialog(self):
+        """UI-3: Открыть диалог шеринга для выбранной записи."""
+        if not self.state.is_active():
+            QMessageBox.warning(self, "Доступ запрещён", "Сначала войдите в хранилище.")
+            return
+
+        entry_id = self.table.get_selected_entry_id()
+        if not entry_id:
+            QMessageBox.information(self, "Выберите запись",
+                                    "Выберите запись в таблице для шеринга.")
+            return
+
+        try:
+            entry = self.entry_manager.get_entry(entry_id)
+            dialog = SharingDialog(self, entry, self.sharing_service, self.qr_service)
+            dialog.exec()
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Ошибка", "Не удалось открыть диалог шеринга: " + str(e))
+
+    def open_qr_viewer(self):
+        """UI-4: Показать QR-код собственного публичного ключа."""
+        if not self.state.is_active():
+            QMessageBox.warning(self, "Доступ запрещён", "Сначала войдите в хранилище.")
+            return
+
+        try:
+            from src.core.import_export.key_exchange import PublicKeyExchangeService, KeyAlgorithm
+            key_service = PublicKeyExchangeService(db_conn=self.db.get_connection())
+            key_info = key_service.generate_key_pair(KeyAlgorithm.RSA_2048)
+
+            qr_codes = key_service.export_own_public_key_as_qr(self.qr_service)
+
+            payload_info = {
+                "type": "public_key",
+                "algorithm": key_info["algorithm"],
+                "fingerprint": key_info["fingerprint"],
+                "key_id": key_info["key_id"],
+                "expires_at": None,
+                "chunks_total": len(qr_codes),
+            }
+
+            dialog = QRViewerDialog(
+                parent=self,
+                qr_codes=qr_codes,
+                payload_info=payload_info,
+                validity_seconds=300,   # QR-4: 5 минут
+                title="Мой публичный ключ (QR)"
+            )
+            dialog.exec()
+
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Не удалось создать QR-код: {e}")
 
     def highlight_vault_entry(self, entry_id: str):
         if hasattr(self, 'table'):

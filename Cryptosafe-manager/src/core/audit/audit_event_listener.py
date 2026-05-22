@@ -95,7 +95,7 @@ class AuditEventListener:
 
         self.audit_logger.log_event(
             event_type="VAULT_ENTRY_DELETE",
-            severity="WARN",  # Deletion is warning level
+            severity="WARN",
             source="vault.entry_manager",
             details={
                 "operation": "delete",
@@ -180,7 +180,6 @@ class AuditEventListener:
         return "text" if data is not None else "unknown"
 
     def _on_clipboard_copied(self, data: Any):
-        print(f"[DEBUG] _on_clipboard_copied called")
         try:
             content_type = self._extract_clipboard_content_type(data)
 
@@ -195,9 +194,8 @@ class AuditEventListener:
                 },
                 user_id=self._current_user_id
             )
-            print("[DEBUG] log_event called successfully")
         except Exception as e:
-            print(f"[DEBUG] Error in _on_clipboard_copied: {e}")
+            print(f"Error: {e}")
 
     def _on_clipboard_cleared(self, data: Any):
         clear_type = "manual" if data is None else str(data)

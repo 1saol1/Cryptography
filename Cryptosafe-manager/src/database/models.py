@@ -98,6 +98,102 @@ def create_tables(conn):
         )
     """)
 
+    # QR-3: Таблица публичных ключей контактов
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS contacts (
+            contact_id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            email TEXT,
+            public_key_pem TEXT NOT NULL DEFAULT '',
+            public_key BLOB,
+            public_key_fingerprint TEXT,
+            algorithm TEXT NOT NULL DEFAULT 'RSA-2048',
+            fingerprint TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'active',
+            verified INTEGER NOT NULL DEFAULT 0,
+            is_active INTEGER NOT NULL DEFAULT 1,
+            has_public_key INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+            revoked_at TEXT,
+            revocation_reason TEXT,
+            rotation_successor_id TEXT,
+            last_used_at TEXT
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_contacts_status
+        ON contacts(status)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_contacts_fingerprint
+        ON contacts(fingerprint)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_contacts_name
+        ON contacts(name)
+    """)
+
+    # DB-1: Таблица шерингов записей
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS shared_entries (
+            share_id TEXT PRIMARY KEY,
+            original_entry_id TEXT NOT NULL,
+            sharer TEXT NOT NULL,
+            recipient TEXT,
+            encryption_method TEXT NOT NULL,
+            permissions TEXT DEFAULT '{}',
+            access_type TEXT DEFAULT 'read_only',
+            shared_at TIMESTAMP NOT NULL DEFAULT (datetime('now')),
+            expires_at TIMESTAMP NOT NULL,
+            revoked_at TIMESTAMP,
+            is_revoked INTEGER NOT NULL DEFAULT 0
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_shared_entries_entry_id
+        ON shared_entries(original_entry_id)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_shared_entries_expires_at
+        ON shared_entries(expires_at)
+    """)
+
+    # DB-2: История операций импорта/экспорта
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS import_export_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            operation_type TEXT NOT NULL,
+            format TEXT NOT NULL,
+            encryption_used TEXT,
+            entry_count INTEGER NOT NULL DEFAULT 0,
+            file_size_bytes INTEGER,
+            file_path TEXT,
+            checksum TEXT,
+            checksum_algorithm TEXT DEFAULT 'SHA256',
+            verification_status TEXT DEFAULT 'unverified',
+            success INTEGER NOT NULL DEFAULT 1,
+            error_message TEXT,
+            performed_by TEXT,
+            performed_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_ie_history_operation
+        ON import_export_history(operation_type)
+    """)
+
+    cursor.execute("""
+        CREATE INDEX IF NOT EXISTS idx_ie_history_performed_at
+        ON import_export_history(performed_at)
+    """)
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -323,3 +419,72 @@ def restore_from_trash(conn, original_id: str) -> bool:
     conn.commit()
     logger.info(f"Запись {original_id} восстановлена из корзины")
     return True
+
+# ==================== QR-3: ФУНКЦИИ ДЛЯ РАБОТЫ С КОНТАКТАМИ ====================
+
+def get_all_contacts(conn, include_revoked: bool = False) -> list:
+    """QR-3: Получение всех контактов из БД."""
+    cursor = conn.cursor()
+    if include_revoked:
+        cursor.execute(
+            "SELECT * FROM contacts ORDER BY created_at DESC"
+        )
+    else:
+        cursor.execute(
+            "SELECT * FROM contacts WHERE status = 'active' ORDER BY created_at DESC"
+        )
+    return cursor.fetchall()
+
+
+def get_contact_by_id(conn, contact_id: str) -> tuple:
+    """QR-3: Получение контакта по ID."""
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM contacts WHERE contact_id = ?", (contact_id,))
+    return cursor.fetchone()
+
+
+def get_contact_by_fingerprint(conn, fingerprint: str) -> tuple:
+    """QR-3: Поиск контакта по fingerprint ключа."""
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM contacts WHERE fingerprint = ? AND status = 'active'",
+        (fingerprint,)
+    )
+    return cursor.fetchone()
+
+
+def update_contact_status(conn, contact_id: str, status: str,
+                           revoked_at: str = None,
+                           revocation_reason: str = None,
+                           rotation_successor_id: str = None) -> bool:
+    """QR-3: Обновление статуса контакта (revoke / rotate)."""
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE contacts
+        SET status = ?,
+            revoked_at = ?,
+            revocation_reason = ?,
+            rotation_successor_id = ?,
+            updated_at = datetime('now')
+        WHERE contact_id = ?
+    """, (status, revoked_at, revocation_reason, rotation_successor_id, contact_id))
+    conn.commit()
+    if cursor.rowcount > 0:
+        logger.info(f"QR-3: Контакт {contact_id} — статус обновлён на '{status}'")
+        return True
+    return False
+
+
+def set_contact_verified(conn, contact_id: str, verified: bool = True) -> bool:
+    """QR-3: Отметить fingerprint контакта как верифицированный."""
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE contacts
+        SET verified = ?, updated_at = datetime('now')
+        WHERE contact_id = ?
+    """, (int(verified), contact_id))
+    conn.commit()
+    if cursor.rowcount > 0:
+        logger.info(f"QR-3: Контакт {contact_id} — verified={verified}")
+        return True
+    return False

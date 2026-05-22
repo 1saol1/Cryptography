@@ -111,6 +111,30 @@ class BitwardenHandler:
 class LastPassHandler:
 
     @staticmethod
+    def serialize(entries: List[Dict[str, Any]]) -> str:
+        """Экспорт в LastPass CSV формат."""
+        output = io.StringIO()
+        # LastPass ожидает именно такой порядок колонок
+        writer = csv.DictWriter(
+            output,
+            fieldnames=["name", "url", "username", "password", "extra", "grouping", "fav"],
+            quoting=csv.QUOTE_ALL,
+            lineterminator="\n"
+        )
+        writer.writeheader()
+        for entry in entries:
+            writer.writerow({
+                "name": entry.get("title", ""),
+                "url": entry.get("url", ""),
+                "username": entry.get("username", ""),
+                "password": entry.get("password", ""),
+                "extra": entry.get("notes", ""),
+                "grouping": entry.get("category", ""),
+                "fav": "1" if entry.get("favorite") else "0"
+            })
+        return output.getvalue()
+
+    @staticmethod
     def deserialize(content: str) -> List[Dict[str, Any]]:
 
         entries = []

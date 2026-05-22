@@ -193,6 +193,11 @@ class SecureTable(QTreeWidget):
                     break
         return result
 
+    def get_selected_entry_id(self) -> str | None:
+        """Возвращает ID первой выбранной записи или None."""
+        ids = self.get_selected_entries()
+        return ids[0] if ids else None
+
     def get_entry_password(self, entry_id: str) -> str:
         for i, eid in enumerate(self._item_ids):
             if eid == entry_id:

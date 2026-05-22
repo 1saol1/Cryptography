@@ -9,7 +9,7 @@ import os
 from src.core.import_export.encryption import ExportEncryptionService
 from src.core.import_export.formats.json_handler import JSONHandler
 from src.core.import_export.formats.csv_handler import CSVHandler
-from src.core.import_export.formats.bitwarden_handler import BitwardenHandler
+from src.core.import_export.formats.bitwarden_handler import BitwardenHandler, LastPassHandler
 
 logger = logging.getLogger(__name__)
 
@@ -18,7 +18,8 @@ class VaultExporter:
     SUPPORTED_FORMATS = {
         "encrypted_json": "Native encrypted JSON format with full metadata",
         "csv": "CSV format (plaintext, good for migration)",
-        "bitwarden_json": "Bitwarden/LastPass compatible JSON format"
+        "bitwarden_json": "Bitwarden compatible JSON format",
+        "lastpass_csv": "LastPass CSV format"
     }
 
     def __init__(self, entry_manager, key_manager, auth_service=None, audit_logger=None):
@@ -62,17 +63,19 @@ class VaultExporter:
                           error_message: str = None) -> None:
 
         if self.audit_logger:
-            log_data = {
-                'event_type': 'vault_export',
-                'timestamp': datetime.utcnow().isoformat() + "Z",
+            details = {
                 'entry_count': entry_count,
                 'export_format': format,
                 'export_mode': export_mode,
-                'success': success,
             }
             if error_message:
-                log_data['error'] = error_message
-            self.audit_logger.log(**log_data)
+                details['error'] = error_message
+            self.audit_logger.log_event(
+                event_type='vault_export',
+                severity='INFO' if success else 'ERROR',
+                source='vault_exporter',
+                details=details
+            )
         else:
             logger.info(f"AUDIT: Export {entry_count} entries, format={format}, success={success}")
 
@@ -282,6 +285,14 @@ class VaultExporter:
                 result = {
                     "format": "bitwarden_json",
                     "data": result,
+                    "entry_count": len(entries)
+                }
+
+            elif format == "lastpass_csv":
+                filtered = self._apply_field_filtering(entries, options or {})
+                result = {
+                    "format": "lastpass_csv",
+                    "data": LastPassHandler.serialize(filtered),
                     "entry_count": len(entries)
                 }
 

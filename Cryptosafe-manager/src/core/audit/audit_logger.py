@@ -87,7 +87,6 @@ class AuditLogger:
         self.config = config or {}
         self._lock = threading.Lock()
 
-        # Создаём ПОСТОЯННОЕ соединение
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
 
@@ -102,14 +101,12 @@ class AuditLogger:
             logger.info("Audit log initialized with genesis entry")
 
     def _create_genesis_entry(self):
-        """Создаёт genesis-запись"""
         try:
-            # Проверяем, есть ли уже genesis
             cursor = self._conn.execute(
                 "SELECT COUNT(*) FROM audit_log WHERE sequence_number = 0"
             )
             if cursor.fetchone()[0] > 0:
-                logger.info("✅ Genesis entry уже существует")
+                logger.info("Genesis entry уже существует")
                 return
 
             genesis_entry = LogEntry(
@@ -124,7 +121,6 @@ class AuditLogger:
             )
 
             self._write_entry(genesis_entry)
-            logger.info("✅ Genesis entry успешно создан (sequence=0)")
 
         except Exception as e:
             logger.error(f"Error creating genesis entry: {e}")
